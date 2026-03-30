@@ -271,11 +271,13 @@ html,body{height:100%;font-family:'DM Sans',sans-serif;background:var(--bg);colo
 .hist-comment{font-size:.75rem;color:#b8d0a8;line-height:1.5;}
 .hist-plant{font-size:.62rem;color:var(--gold);margin-top:4px;}
 .hist-del{
-  position:absolute;top:8px;right:8px;
-  background:none;border:none;color:#3a4a3a;cursor:pointer;
-  font-size:.9rem;transition:color .2s;
+  position:absolute;top:6px;right:6px;
+  background:none;border:none;color:#5a6a5a;cursor:pointer;
+  font-size:1.1rem;transition:color .2s;
+  width:28px;height:28px;display:flex;align-items:center;justify-content:center;
+  border-radius:50%;
 }
-.hist-del:hover{color:var(--danger);}
+.hist-del:hover{color:var(--danger);background:rgba(192,64,64,.1);}
 .hist-img{
   width:100%;max-height:120px;object-fit:cover;
   border-radius:6px;margin-top:8px;
@@ -1841,13 +1843,29 @@ function loadData(){
   } else {
     initDefault();
   }
+  // Підтягуємо свіжі дані з Firebase у фоні
+  if(window.firebaseReady && window.firebaseLoad){
+    const fbKey = `shared_${gid}`;
+    window.firebaseLoad(fbKey).then(remoteState => {
+      if(!remoteState) return;
+      state.plants = remoteState.plants || state.plants;
+      state.history = remoteState.history || state.history;
+      state.plans = remoteState.plans || state.plans;
+      state.nextId = remoteState.nextId || state.nextId;
+      state.sortsDb = remoteState.sortsDb || state.sortsDb;
+      if(remoteState.gridCols) gridCols = remoteState.gridCols;
+      if(remoteState.gridRows) gridRows = remoteState.gridRows;
+      localStorage.setItem(gardenStorageKey(activeUserId, gid), JSON.stringify(state));
+      renderMap(); renderDashboard(); updateGridUI();
+    }).catch(()=>{});
+  }
 }
 
 function switchUser(userId){
   if(activeUserId) saveData(true);
+  if(_fbUnsubscribe){ _fbUnsubscribe(); _fbUnsubscribe = null; }
   activeUserId = userId;
   localStorage.setItem(ACTIVE_KEY, userId);
-  // Load last active garden for this user
   const lastGarden = localStorage.getItem(ACTIVE_GARDEN_KEY+'_'+userId) || 'g_default';
   activeGardenId = lastGarden;
   state = {plants:[],history:[],plans:[],nextId:200,sortsDb:{}};
@@ -1857,6 +1875,8 @@ function switchUser(userId){
   closeDetail();
   resizeCanvas(); renderMap(); renderDashboard(); updateGridUI(); updateUserUI();
   renderGardenMenu();
+  // Запускаємо Firebase sync для нового юзера
+  if(window.firebaseReady) startFirebaseSync();
 }
 
 function switchGarden(gardenId){
