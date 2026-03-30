@@ -434,12 +434,12 @@ html,body{height:100%;font-family:'DM Sans',sans-serif;background:var(--bg);colo
 #user-menu.open{display:flex;}
 #user-menu-overlay.open{display:block;}
 
-.add-menu-wrap{position:relative;}
+.add-menu-wrap{position:static;}
 .add-main-btn{font-size:1.1rem!important;font-weight:700;min-width:34px;padding:5px 12px!important;}
 .add-menu{
-  position:absolute;top:calc(100% + 6px);left:50%;transform:translateX(-50%);
+  position:fixed;
   background:var(--surface);border:1px solid var(--border);
-  border-radius:10px;padding:6px;z-index:300;
+  border-radius:10px;padding:6px;z-index:500;
   display:none;flex-direction:column;gap:3px;
   box-shadow:0 8px 30px rgba(0,0,0,.6);min-width:140px;
   animation:fadeIn .15s ease;
@@ -452,7 +452,7 @@ html,body{height:100%;font-family:'DM Sans',sans-serif;background:var(--bg);colo
   transition:background .15s;
 }
 .add-menu button:hover{background:rgba(201,168,76,.12);}
-@keyframes fadeIn{from{opacity:0;transform:translateX(-50%) translateY(-4px);}to{opacity:1;transform:translateX(-50%) translateY(0);}}
+@keyframes fadeIn{from{opacity:0;translateY(-4px);}to{opacity:1;translateY(0);}}
 #mapWrap{
   flex:1;position:relative;overflow:hidden;
   background:radial-gradient(ellipse at 30% 40%,#1a3a14,#0a140a 70%);
@@ -4120,7 +4120,17 @@ function viewPhoto(src){
 }
 
 function toggleAddMenu(){
-  document.getElementById('addMenu').classList.toggle('open');
+  const btn = document.querySelector('.add-main-btn');
+  const menu = document.getElementById('addMenu');
+  if(menu.classList.contains('open')){
+    menu.classList.remove('open');
+    return;
+  }
+  // Position menu below the + button
+  const rect = btn.getBoundingClientRect();
+  menu.style.top = (rect.bottom + 6) + 'px';
+  menu.style.left = Math.max(8, rect.left - 40) + 'px';
+  menu.classList.add('open');
 }
 function closeAddMenu(){
   document.getElementById('addMenu').classList.remove('open');
@@ -4128,7 +4138,8 @@ function closeAddMenu(){
 // Close menu on outside click
 document.addEventListener('click', e=>{
   const wrap = document.getElementById('addMenuWrap');
-  if(wrap && !wrap.contains(e.target)) closeAddMenu();
+  const menu = document.getElementById('addMenu');
+  if(wrap && !wrap.contains(e.target) && !menu.contains(e.target)) closeAddMenu();
 });
 
 function toggleUserMenu(){
