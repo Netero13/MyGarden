@@ -2403,7 +2403,7 @@ function saveData(silent){
 
   // Firebase sync
   if(window.firebaseReady && _fbSyncEnabled){
-    const fbKey = `${activeUserId}_${gid}`;
+    const fbKey = `shared_${gid}`;
     _fbLastSaveTime = Date.now();
     window.firebaseSave(fbKey, state);
   }
@@ -2425,7 +2425,8 @@ function startFirebaseSync(){
 
   if(_fbUnsubscribe) _fbUnsubscribe();
   const gid = activeGardenId || 'g_default';
-  const fbKey = `${activeUserId}_${gid}`;
+  // Спільний ключ для всієї родини — не прив'язаний до юзера
+  const fbKey = `shared_${gid}`;
 
   _fbUnsubscribe = window.firebaseSubscribe(fbKey, (remoteState) => {
     // Ігноруємо якщо щойно самі зберігали (щоб не перезаписати)
