@@ -2,7 +2,7 @@
 importScripts('https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js');
 importScripts('https://www.gstatic.com/firebasejs/10.12.0/firebase-messaging-compat.js');
 
-const CACHE_NAME = 'sadochok-v6';
+const CACHE_NAME = 'sadochok-v7';
 
 firebase.initializeApp({
   apiKey: "AIzaSyCnQXcJm106-uoNETmrLWLetv2ed2NipS8",
