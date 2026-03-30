@@ -1,5 +1,5 @@
 // 🌿 Мій Садочок — Service Worker
-const CACHE_NAME = 'sadochok-v1';
+const CACHE_NAME = 'sadochok-v3';
 
 // Файли які кешуємо при встановленні
 const PRECACHE_URLS = [
