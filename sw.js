@@ -1,93 +1,71 @@
-// 🌿 Мій Садочок — Service Worker
-const CACHE_NAME = 'sadochok-v3';
+// 🌿 Мій Садочок — Service Worker v4 (FCM)
+importScripts('https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js');
+importScripts('https://www.gstatic.com/firebasejs/10.12.0/firebase-messaging-compat.js');
 
-// Файли які кешуємо при встановленні
-const PRECACHE_URLS = [
-  './garden-manager.html',
-  './manifest.json',
-  'https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,600;0,700;1,400&family=DM+Sans:wght@300;400;500;600&display=swap'
-];
+const CACHE_NAME = 'sadochok-v6';
 
-// ── Встановлення: кешуємо основні файли ──
+firebase.initializeApp({
+  apiKey: "AIzaSyCnQXcJm106-uoNETmrLWLetv2ed2NipS8",
+  authDomain: "mygarden-29139.firebaseapp.com",
+  projectId: "mygarden-29139",
+  storageBucket: "mygarden-29139.firebasestorage.app",
+  messagingSenderId: "137895417132",
+  appId: "1:137895417132:web:771b1461cb8117d4dc4889"
+});
+
+const messaging = firebase.messaging();
+
+// Background push
+messaging.onBackgroundMessage((payload) => {
+  const { title, body } = payload.notification || {};
+  self.registration.showNotification(title || '🌿 Садочок', {
+    body: body || '',
+    icon: './icon-192.png',
+    badge: './icon-192.png',
+    vibrate: [200, 100, 200],
+  });
+});
+
+// Cache
+const PRECACHE_URLS = ['./garden-manager.html', './manifest.json'];
+
 self.addEventListener('install', event => {
   event.waitUntil(
-    caches.open(CACHE_NAME).then(cache => {
-      console.log('[SW] Pre-caching files');
-      // Кешуємо по одному — щоб не падало якщо один не доступний
-      return Promise.allSettled(
-        PRECACHE_URLS.map(url => cache.add(url).catch(e => console.warn('[SW] Could not cache:', url, e)))
-      );
-    }).then(() => self.skipWaiting())
+    caches.open(CACHE_NAME)
+      .then(cache => Promise.allSettled(PRECACHE_URLS.map(url => cache.add(url).catch(()=>{}))))
+      .then(() => self.skipWaiting())
   );
 });
 
-// ── Активація: видаляємо старий кеш ──
 self.addEventListener('activate', event => {
   event.waitUntil(
-    caches.keys().then(keys =>
-      Promise.all(
-        keys.filter(k => k !== CACHE_NAME).map(k => {
-          console.log('[SW] Deleting old cache:', k);
-          return caches.delete(k);
-        })
-      )
-    ).then(() => self.clients.claim())
+    caches.keys()
+      .then(keys => Promise.all(keys.filter(k => k !== CACHE_NAME).map(k => caches.delete(k))))
+      .then(() => self.clients.claim())
   );
 });
 
-// ── Fetch: Cache-first, fallback to network ──
 self.addEventListener('fetch', event => {
-  // Не чіпаємо POST і не-GET запити
-  if (event.request.method !== 'GET') return;
-
-  // Не чіпаємо chrome-extension та інші схеми
-  if (!event.request.url.startsWith('http')) return;
-
+  if(event.request.method !== 'GET' || !event.request.url.startsWith('http')) return;
   event.respondWith(
     caches.match(event.request).then(cached => {
-      if (cached) {
-        // Є в кеші — повертаємо, але фоново оновлюємо
-        const fetchPromise = fetch(event.request)
-          .then(response => {
-            if (response && response.status === 200 && response.type !== 'opaque') {
-              const cloned = response.clone();
-              caches.open(CACHE_NAME).then(cache => cache.put(event.request, cloned));
-            }
-            return response;
-          })
-          .catch(() => {}); // мовчки ігноруємо помилки мережі
-        
-        return cached;
-      }
-
-      // Немає в кеші — йдемо в мережу і кешуємо
-      return fetch(event.request).then(response => {
-        if (!response || response.status !== 200) return response;
-        
-        // Не кешуємо opaque responses (cross-origin без CORS) — крім шрифтів
-        if (response.type === 'opaque') return response;
-
-        const cloned = response.clone();
-        caches.open(CACHE_NAME).then(cache => cache.put(event.request, cloned));
-        return response;
-      }).catch(() => {
-        // Офлайн і немає кешу — повертаємо garden-manager як fallback
-        if (event.request.destination === 'document') {
-          return caches.match('./garden-manager.html');
+      const net = fetch(event.request).then(r => {
+        if(r && r.status === 200 && r.type !== 'opaque'){
+          caches.open(CACHE_NAME).then(c => c.put(event.request, r.clone()));
         }
-      });
+        return r;
+      }).catch(()=>{});
+      return cached || net;
     })
   );
 });
 
-// ── Push notifications (підготовка на майбутнє) ──
-self.addEventListener('push', event => {
-  if (!event.data) return;
-  const data = event.data.json();
-  self.registration.showNotification(data.title || '🌿 Садочок', {
-    body: data.body || '',
-    icon: './icon-192.png',
-    badge: './icon-192.png',
-    vibrate: [200, 100, 200]
-  });
+self.addEventListener('notificationclick', event => {
+  event.notification.close();
+  event.waitUntil(
+    clients.matchAll({type:'window',includeUncontrolled:true}).then(list => {
+      if(list.length) return list[0].focus();
+      return clients.openWindow('./garden-manager.html');
+    })
+  );
 });
