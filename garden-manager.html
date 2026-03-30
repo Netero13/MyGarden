@@ -23,6 +23,132 @@
     });
   }
 </script>
+
+<!-- Firebase -->
+<script type="module">
+  import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js';
+  import { getFirestore, doc, setDoc, onSnapshot, getDoc } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js';
+  import { getMessaging, getToken, onMessage } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-messaging.js';
+
+  const firebaseConfig = {
+    apiKey: "AIzaSyCnQXcJm106-uoNETmrLWLetv2ed2NipS8",
+    authDomain: "mygarden-29139.firebaseapp.com",
+    projectId: "mygarden-29139",
+    storageBucket: "mygarden-29139.firebasestorage.app",
+    messagingSenderId: "137895417132",
+    appId: "1:137895417132:web:771b1461cb8117d4dc4889"
+  };
+
+  const VAPID_KEY = "BFZsZJFIJt2w8dii4RA0KEy6IhwZUGo3dWxx2EbK5haNMLtDHEJzucus6Q61wYhtLD9zo3plxhFRmg7Bb842N4A";
+
+  const app = initializeApp(firebaseConfig);
+  const db = getFirestore(app);
+
+  // ── Зберігаємо дані в Firebase ──
+  window.firebaseSave = async (gardenId, data) => {
+    try {
+      await setDoc(doc(db, 'gardens', gardenId), {
+        data: JSON.stringify(data),
+        updatedAt: Date.now()
+      });
+    } catch(e) {
+      console.warn('[Firebase] Save error:', e);
+    }
+  };
+
+  // ── Підписуємось на зміни в реальному часі ──
+  window.firebaseSubscribe = (gardenId, callback) => {
+    return onSnapshot(doc(db, 'gardens', gardenId), (snap) => {
+      if(snap.exists()){
+        try {
+          const data = JSON.parse(snap.data().data);
+          callback(data);
+        } catch(e) {
+          console.warn('[Firebase] Parse error:', e);
+        }
+      }
+    });
+  };
+
+  // ── Завантажуємо дані з Firebase ──
+  window.firebaseLoad = async (gardenId) => {
+    try {
+      const snap = await getDoc(doc(db, 'gardens', gardenId));
+      if(snap.exists()) return JSON.parse(snap.data().data);
+    } catch(e) {
+      console.warn('[Firebase] Load error:', e);
+    }
+    return null;
+  };
+
+  // ── Зберігаємо FCM токен юзера ──
+  window.saveFcmToken = async (userId, token) => {
+    try {
+      await setDoc(doc(db, 'fcmTokens', userId), { token, updatedAt: Date.now() }, { merge: true });
+    } catch(e) {
+      console.warn('[FCM] Token save error:', e);
+    }
+  };
+
+  // ── Відправляємо push через Firestore тригер ──
+  window.sendPushNotification = async (title, body, authorName) => {
+    try {
+      await setDoc(doc(db, 'notifications', 'latest'), {
+        title, body, authorName,
+        sentAt: Date.now()
+      });
+    } catch(e) {
+      console.warn('[FCM] Push send error:', e);
+    }
+  };
+
+  // ── Ініціалізація FCM ──
+  async function initFCM(){
+    try {
+      const messaging = getMessaging(app);
+
+      // Запитуємо дозвіл на сповіщення
+      const permission = await Notification.requestPermission();
+      if(permission !== 'granted'){
+        console.log('[FCM] Permission denied');
+        return;
+      }
+
+      // Отримуємо токен
+      const swReg = await navigator.serviceWorker.ready;
+      const token = await getToken(messaging, {
+        vapidKey: VAPID_KEY,
+        serviceWorkerRegistration: swReg
+      });
+
+      if(token){
+        console.log('[FCM] Token:', token.slice(0,20)+'...');
+        window._fcmToken = token;
+        // Зберігаємо токен — activeUserId може ще не бути, тому через подію
+        window.dispatchEvent(new CustomEvent('fcm-token-ready', { detail: token }));
+      }
+
+      // Слухаємо push коли додаток відкритий (foreground)
+      onMessage(messaging, (payload) => {
+        console.log('[FCM] Message received:', payload);
+        const { title, body } = payload.notification || {};
+        if(title){
+          // Показуємо як тост
+          if(window.toast) toast(`🔔 ${title}: ${body||''}`);
+        }
+      });
+
+    } catch(e) {
+      console.warn('[FCM] Init error:', e);
+    }
+  }
+
+  // Запускаємо FCM після того як SW зареєстровано
+  navigator.serviceWorker.ready.then(()=> initFCM());
+
+  window.firebaseReady = true;
+  window.dispatchEvent(new Event('firebase-ready'));
+</script>
 <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,600;0,700;1,400&family=DM+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
 <style>
 *{margin:0;padding:0;box-sizing:border-box;}
@@ -304,6 +430,12 @@ html,body{height:100%;font-family:'DM Sans',sans-serif;background:var(--bg);colo
 .tb-logo:hover{background:rgba(201,168,76,.1);}
 .tb-season{font-size:.65rem;color:var(--muted);white-space:nowrap;}
 .tb-user-btn{font-size:.7rem;max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.role-btn{
+  padding:6px 12px;border-radius:20px;border:1px solid var(--border);
+  background:transparent;color:var(--muted);font-size:.72rem;font-weight:600;
+  cursor:pointer;font-family:'DM Sans',sans-serif;transition:all .2s;
+}
+.role-btn.active{background:var(--gold);color:#0a140a;border-color:var(--gold);}
 .tool-btn{
   display:flex;align-items:center;gap:5px;
   padding:6px 12px;border-radius:20px;
@@ -511,8 +643,16 @@ html,body{height:100%;font-family:'DM Sans',sans-serif;background:var(--bg);colo
   font-family:'Cormorant Garamond',serif;
   font-size:1.2rem;font-weight:700;color:var(--gold-light);
 }
-.modal-close{background:none;border:none;color:var(--muted);cursor:pointer;font-size:1.1rem;transition:color .2s;}
-.modal-close:hover{color:var(--cream);}
+.modal-close{
+  background:rgba(255,255,255,.06);
+  border:1px solid rgba(255,255,255,.1);
+  color:var(--muted);cursor:pointer;
+  font-size:1rem;transition:all .2s;
+  width:32px;height:32px;border-radius:8px;
+  display:flex;align-items:center;justify-content:center;
+  flex-shrink:0;
+}
+.modal-close:hover{color:var(--cream);background:rgba(255,255,255,.12);}
 .modal-body{padding:16px 20px 20px;display:flex;flex-direction:column;gap:12px;}
 
 /* ─── FORM ELEMENTS ─── */
@@ -671,20 +811,40 @@ select option{background:#111d11;}
 <!-- ═══════ PROFILE SCREEN ═══════ -->
 <div id="profile-screen" style="display:none;position:fixed;inset:0;z-index:1000;background:var(--bg);align-items:center;justify-content:center;flex-direction:column;gap:24px;">
   <div style="text-align:center;">
-    <div style="font-size:3rem;margin-bottom:8px;">🌿</div>
+    <div style="font-size:3rem;margin-bottom:8px;"><img src="logo.png" style="width:80px;height:80px;border-radius:50%;object-fit:cover;"></div>
     <h1 style="font-family:'Cormorant Garamond',serif;font-size:2rem;color:var(--gold-light);">Мій Садочок</h1>
     <p style="color:var(--muted);font-size:.85rem;margin-top:6px;">Оберіть свій профіль</p>
   </div>
   <div id="profile-list" style="display:flex;flex-wrap:wrap;gap:12px;justify-content:center;max-width:520px;"></div>
   <div id="profile-form" style="display:none;flex-direction:column;gap:10px;background:var(--surface);border:1px solid var(--border);border-radius:16px;padding:20px;width:300px;">
     <div id="pf-title" style="font-family:'Cormorant Garamond',serif;font-size:1.1rem;color:var(--gold-light);">Новий профіль</div>
-    <div style="display:flex;align-items:center;gap:10px;">
-      <div id="pf-avatar-display" onclick="toggleAvatarPicker()" style="font-size:2.2rem;width:50px;height:50px;border-radius:50%;background:var(--surface2);display:flex;align-items:center;justify-content:center;cursor:pointer;border:1px solid var(--border);">👤</div>
-      <input type="hidden" id="pf-avatar-val" value="👤">
-      <div id="avatar-picker" style="display:none;flex-wrap:wrap;gap:4px;flex:1;"></div>
+    <div style="display:flex;flex-direction:column;align-items:center;gap:8px;">
+      <div style="position:relative;">
+        <div id="pf-avatar-display" style="font-size:2.5rem;width:80px;height:80px;border-radius:50%;background:var(--surface2);display:flex;align-items:center;justify-content:center;border:2px solid var(--border);overflow:hidden;">👤</div>
+        <input type="hidden" id="pf-avatar-val" value="👤">
+        <input type="hidden" id="pf-avatar-photo" value="">
+      </div>
+      <div style="display:flex;gap:6px;">
+        <label style="padding:5px 12px;border-radius:8px;background:rgba(201,168,76,.15);border:1px solid rgba(201,168,76,.3);color:var(--gold);font-size:.72rem;font-weight:600;cursor:pointer;font-family:'DM Sans',sans-serif;">
+          📷 Завантажити фото
+          <input type="file" accept="image/*" onchange="loadAvatarPhoto(this)" style="display:none;">
+        </label>
+        <button type="button" onclick="toggleAvatarPicker()" style="padding:5px 12px;border-radius:8px;background:rgba(255,255,255,.05);border:1px solid var(--border);color:var(--muted);font-size:.72rem;cursor:pointer;font-family:'DM Sans',sans-serif;">😊 Емодзі</button>
+      </div>
+      <div id="avatar-picker" style="display:none;flex-wrap:wrap;gap:4px;justify-content:center;"></div>
     </div>
     <div><label>Ім'я</label><input type="text" id="pf-name" placeholder="Тато, Мама, Іванко..." maxlength="20" onkeydown="if(event.key==='Enter')saveNewProfile()"></div>
-    <div><label>Роль (необов'язково)</label><input type="text" id="pf-role" placeholder="Господар, Помічник..."></div>
+    <div>
+      <label>Роль</label>
+      <div style="display:flex;gap:6px;flex-wrap:wrap;">
+        <button type="button" class="role-btn active" data-role="Тато" onclick="selectRole(this)">👨 Тато</button>
+        <button type="button" class="role-btn" data-role="Мама" onclick="selectRole(this)">👩 Мама</button>
+        <button type="button" class="role-btn" data-role="Дитина" onclick="selectRole(this)">👦 Дитина</button>
+        <button type="button" class="role-btn" data-role="" onclick="selectRole(this)">✏️ Своя</button>
+      </div>
+      <input type="text" id="pf-role" placeholder="Введіть роль..." style="margin-top:6px;display:none;">
+      <input type="hidden" id="pf-role-val" value="Тато">
+    </div>
     <input type="hidden" id="pf-parent-id" value="">
     <div style="display:flex;gap:8px;">
       <button class="btn btn-ghost" style="flex:1;" onclick="hideAddProfileForm()">Скасувати</button>
@@ -696,6 +856,53 @@ select option{background:#111d11;}
 <!-- USER MENU -->
 <div id="user-menu"></div>
 <div id="user-menu-overlay" onclick="closeUserMenu()"></div>
+
+<!-- ═══════ EDIT PROFILE MODAL ═══════ -->
+<div class="modal-overlay" id="editProfileModal">
+  <div class="modal" style="max-width:340px;">
+    <div class="modal-head">
+      <div class="modal-title">🪶 Редагувати профіль</div>
+      <button class="modal-close" onclick="closeModal('editProfileModal')">✕</button>
+    </div>
+    <div class="modal-body">
+      <!-- Аватар -->
+      <div style="display:flex;flex-direction:column;align-items:center;gap:8px;">
+        <div id="ep-avatar-display" style="font-size:2.5rem;width:80px;height:80px;border-radius:50%;background:var(--surface2);display:flex;align-items:center;justify-content:center;border:2px solid var(--border);overflow:hidden;">👤</div>
+        <input type="hidden" id="ep-avatar-val" value="👤">
+        <input type="hidden" id="ep-avatar-photo" value="">
+        <div style="display:flex;gap:6px;">
+          <label style="padding:5px 12px;border-radius:8px;background:rgba(201,168,76,.15);border:1px solid rgba(201,168,76,.3);color:var(--gold);font-size:.72rem;font-weight:600;cursor:pointer;font-family:'DM Sans',sans-serif;">
+            📷 Фото
+            <input type="file" accept="image/*" onchange="loadEditAvatarPhoto(this)" style="display:none;">
+          </label>
+          <button type="button" onclick="toggleEditAvatarPicker()" style="padding:5px 12px;border-radius:8px;background:rgba(255,255,255,.05);border:1px solid var(--border);color:var(--muted);font-size:.72rem;cursor:pointer;font-family:'DM Sans',sans-serif;">😊 Емодзі</button>
+        </div>
+        <div id="ep-avatar-picker" style="display:none;flex-wrap:wrap;gap:4px;justify-content:center;"></div>
+      </div>
+      <!-- Ім'я -->
+      <div>
+        <label>Ім'я</label>
+        <input type="text" id="ep-name" placeholder="Тато, Мама..." maxlength="20">
+      </div>
+      <!-- Роль -->
+      <div>
+        <label>Роль</label>
+        <div style="display:flex;gap:6px;flex-wrap:wrap;">
+          <button type="button" class="role-btn ep-role-btn" data-role="Тато" onclick="selectEditRole(this)">👨 Тато</button>
+          <button type="button" class="role-btn ep-role-btn" data-role="Мама" onclick="selectEditRole(this)">👩 Мама</button>
+          <button type="button" class="role-btn ep-role-btn" data-role="Дитина" onclick="selectEditRole(this)">👦 Дитина</button>
+          <button type="button" class="role-btn ep-role-btn" data-role="" onclick="selectEditRole(this)">✏️ Своя</button>
+        </div>
+        <input type="text" id="ep-role-custom" placeholder="Введіть роль..." style="margin-top:6px;display:none;">
+        <input type="hidden" id="ep-role-val" value="">
+      </div>
+      <div class="btn-row">
+        <button class="btn btn-ghost" onclick="closeModal('editProfileModal')">Скасувати</button>
+        <button class="btn btn-primary" onclick="saveEditProfile()">Зберегти</button>
+      </div>
+    </div>
+  </div>
+</div>
 
 <!-- ═══════ DRAWER (replaces sidebar) ═══════ -->
 <div id="drawer">
@@ -713,7 +920,7 @@ select option{background:#111d11;}
   <div id="toolbar">
     <!-- Рядок 1: лого + сезон + юзер -->
     <div class="tb-row tb-row-1">
-      <button id="garden-btn" onclick="toggleGardenMenu()" class="tb-logo">🌿 Мій садочок</button>
+      <button id="garden-btn" onclick="toggleGardenMenu()" class="tb-logo"><img src="logo.png" style="width:28px;height:28px;border-radius:50%;object-fit:cover;vertical-align:middle;margin-right:5px;">Мій садочок</button>
       <span id="d-season-label" class="tb-season"></span>
       <span style="flex:1;"></span>
       <div id="save-indicator" style="font-size:.6rem;color:var(--muted);opacity:0;transition:opacity .4s;white-space:nowrap;">🌿 збережено</div>
@@ -897,7 +1104,69 @@ select option{background:#111d11;}
           <option value="acacia">🌸 Акація</option>
         </optgroup>
       </select>
+      <!-- Кнопка додати новий сорт -->
+      <button onclick="openAddSortModal()" style="
+        width:100%;margin-bottom:8px;padding:8px;border-radius:8px;
+        background:rgba(201,168,76,.1);border:1px dashed rgba(201,168,76,.4);
+        color:var(--gold);font-size:.75rem;font-weight:600;cursor:pointer;
+        font-family:'DM Sans',sans-serif;transition:all .2s;
+      ">✏️ Додати новий сорт</button>
       <div id="sorts-modal-list"></div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════ ADD SORT MODAL ═══════ -->
+<div class="modal-overlay" id="addSortModal">
+  <div class="modal" style="max-width:480px;">
+    <div class="modal-head">
+      <div class="modal-title">✨ Новий сорт</div>
+      <button class="modal-close" onclick="closeModal('addSortModal')">✕</button>
+    </div>
+    <div class="modal-body">
+      <div>
+        <label>Вид рослини</label>
+        <select id="new-sort-type" style="width:100%;" onchange="onNewSortTypeChange()">
+          <option value="apple">🍎 Яблуня</option>
+          <option value="pear">🍐 Груша</option>
+          <option value="cherry">🍒 Черешня</option>
+          <option value="vishnya">🍒 Вишня</option>
+          <option value="plum">🫐 Слива</option>
+          <option value="apricot">🍑 Абрикос</option>
+          <option value="peach">🍑 Персик</option>
+          <option value="currant">🍇 Смородина</option>
+          <option value="redcurrant">🍇 Порічка</option>
+          <option value="blueberry">🫐 Лохина</option>
+          <option value="pine">🌲 Сосна</option>
+          <option value="spruce">🌲 Ялина</option>
+          <option value="thuja">🌿 Туя</option>
+          <option value="juniper">🌿 Ялівець</option>
+          <option value="oak">🌳 Дуб</option>
+          <option value="birch">🌳 Береза</option>
+          <option value="maple">🍁 Клен</option>
+          <option value="other">🌿 Інший вид (вказати вручну)</option>
+        </select>
+        <input type="text" id="new-sort-type-custom" placeholder="Назва виду, напр. Фейхоа, Ківі..." style="display:none;margin-top:6px;">
+      </div>
+      <div>
+        <label>Назва сорту</label>
+        <input type="text" id="new-sort-name" placeholder="напр. Медуниця, Пінк Леді...">
+      </div>
+      <button onclick="generateSortDesc()" id="gen-sort-btn" style="
+        width:100%;padding:9px;border-radius:8px;
+        background:rgba(201,168,76,.15);border:1px solid rgba(201,168,76,.35);
+        color:var(--gold);font-size:.75rem;font-weight:600;cursor:pointer;
+        font-family:'DM Sans',sans-serif;
+        display:none;
+      ">🤖 Згенерувати опис через AI</button>
+      <div id="new-sort-desc-wrap">
+        <label>Опис та поради (необов'язково)</label>
+        <textarea id="new-sort-desc" style="min-height:120px;font-size:.72rem;line-height:1.6;"></textarea>
+      </div>
+      <div class="btn-row">
+        <button class="btn btn-ghost" onclick="closeModal('addSortModal')">Скасувати</button>
+        <button class="btn btn-primary" onclick="saveNewSort()">Зберегти сорт</button>
+      </div>
     </div>
   </div>
 </div>
@@ -956,6 +1225,14 @@ select option{background:#111d11;}
       <div>
         <label>Коментар</label>
         <textarea id="ev-comment" placeholder="Опишіть подію, препарат, кількість..."></textarea>
+      </div>
+
+      <div>
+        <label style="display:flex;align-items:center;gap:6px;">
+          <span>📌 Примітка від господаря</span>
+          <span style="font-size:.6rem;color:var(--muted);font-weight:400;">(видно всім)</span>
+        </label>
+        <textarea id="ev-owner-note" placeholder="Важливе спостереження, попередження, порада..." style="min-height:50px;border-color:rgba(201,168,76,.25);"></textarea>
       </div>
 
       <!-- Photo only for past events -->
@@ -1083,9 +1360,35 @@ select option{background:#111d11;}
               <input type="checkbox" id="pl-sort-unknown" onchange="onSortUnknownChange()" style="width:14px;height:14px;accent-color:var(--gold);cursor:pointer;">
               Не визначений (додам пізніше)
             </label>
+            <!-- API lookup button -->
+            <button type="button" id="api-lookup-btn" onclick="lookupPlantInfo()" style="
+              margin-top:6px;width:100%;padding:7px;border-radius:8px;
+              background:rgba(201,168,76,.1);border:1px solid rgba(201,168,76,.3);
+              color:var(--gold);font-size:.72rem;font-weight:600;cursor:pointer;
+              font-family:'DM Sans',sans-serif;transition:all .2s;
+            ">🔍 Знайти інфо про сорт</button>
           </div>
         </div>
       </div>
+
+      <!-- API result block -->
+      <div id="api-result-block" style="display:none;background:var(--surface2);border:1px solid var(--border);border-radius:10px;padding:12px;gap:10px;flex-direction:column;">
+        <div style="display:flex;gap:10px;align-items:flex-start;">
+          <img id="api-result-img" src="" style="width:80px;height:80px;object-fit:cover;border-radius:8px;border:1px solid var(--border);flex-shrink:0;display:none;">
+          <div style="flex:1;min-width:0;">
+            <div id="api-result-name" style="font-size:.8rem;font-weight:700;color:var(--gold-light);margin-bottom:4px;"></div>
+            <div id="api-result-desc" style="font-size:.72rem;color:#b8d0a8;line-height:1.5;"></div>
+          </div>
+        </div>
+        <div id="api-result-care" style="font-size:.7rem;color:var(--muted);line-height:1.6;border-top:1px solid var(--border);padding-top:8px;display:none;"></div>
+        <button type="button" onclick="applyApiResult()" style="
+          padding:7px;border-radius:8px;width:100%;
+          background:var(--gold);color:#0a140a;
+          border:none;font-size:.72rem;font-weight:700;
+          cursor:pointer;font-family:'DM Sans',sans-serif;
+        ">✓ Вставити в картку</button>
+      </div>
+
       <div>
         <label>Назва / мітка</label>
         <input type="text" id="pl-name" placeholder="напр. Яблуня біля паркану">
@@ -1127,133 +1430,134 @@ select option{background:#111d11;}
 // ═══════════════════════════════════════════════════════
 const SORTS_DB_BUILTIN = {
   apple: [
-    { sort:'Симиренко',    desc:"Легендарний зимовий сорт. Плоди 140–170 г, зелені з білими крапочками. М'якоть кремова, солодка з пряним присмаком. Зберігається до квітня. Дегустація 4,7/5." },
-    { sort:'Голден',       desc:"Американський сорт. Плоди 150–200 г, золотисто-жовті. М'якоть солодка, соковита, щільна. Зберігається до лютого. Відмінний для соку." },
-    { sort:'Антонівка',    desc:"Класичний осінній сорт. Плоди 120–150 г, жовто-зелені. Кисло-солодкий смак з виразним ароматом. Зберігається до грудня. Ідеальний для варення." },
-    { sort:'Флоріна',      desc:"Французький сорт. Стійкий до парші. Плоди 180–220 г, жовто-червоні. Соковита, солодка м'якоть. Зберігається до березня." },
-    { sort:'Айдаред',      desc:"Американський сорт. Плоди великі, яскраво-червоні. М'якоть соковита, кисло-солодка. Зберігається до квітня. Відмінна транспортабельність." },
-    { sort:'Слава переможцям', desc:"Ранньоосінній сорт. Плоди 150–180 г, жовто-зелені з рум'янцем. М'якоть кремова, ароматна. Дозрівання: серпень–вересень." },
+    { sort:'Симиренко', desc:"Легендарний зимовий сорт (1880). Плоди 140–170 г, зелені з білими підшкірними крапочками. М'якоть кремова, солодка з пряним присмаком. Зберігається до квітня. Дегустація 4,7/5.\n💧 Полив: помірний, 2–3 рази на місяць у посуху.\n✂️ Обрізка: рання весна до розпускання бруньок, проріджування крони.\n🌱 Підживлення: азот навесні, фосфор-калій у серпні.\n🛡️ Хвороби: стійкий до парші, профілактика бордоською рідиною." },
+    { sort:'Голден', desc:"Американський десертний сорт. Плоди 150–200 г, золотисто-жовті, без рум'янця. М'якоть солодка, соковита, щільна. Зберігається до лютого. Відмінний для соку і сушіння.\n💧 Полив: рясний у червні-липні під час наливу плодів.\n✂️ Обрізка: формування розлогої крони, щороку проріджування.\n🌱 Підживлення: органіка восени, комплексне добриво навесні.\n🛡️ Хвороби: сприйнятливий до парші — обробка фунгіцидами." },
+    { sort:'Антонівка', desc:"Класичний осінньо-зимовий сорт. Плоди 120–150 г, жовто-зелені з характерним ароматом. Кисло-солодкий смак. Зберігається до грудня. Ідеальний для варення і мочіння.\n💧 Полив: 3–4 рази за сезон, рясно в посушливі роки.\n✂️ Обрізка: щорічне проріджування, видалення вовчків.\n🌱 Підживлення: перегній навесні 5–6 кг/дерево.\n🛡️ Хвороби: висока стійкість до хвороб, профілактика від плодожерки." },
+    { sort:'Флоріна', desc:"Французький зимостійкий сорт. Плоди 180–220 г, жовто-червоні. Соковита, солодка м'якоть. Зберігається до березня. Відмінна стійкість до парші.\n💧 Полив: помірний, збільшити у серпні при наливі плодів.\n✂️ Обрізка: мінімальна — сорт схильний до загущення.\n🌱 Підживлення: комплексне NPK навесні та після цвітіння.\n🛡️ Хвороби: імунний до парші (ген Vf), обробка від кліща." },
+    { sort:'Айдаред', desc:"Американський пізній сорт. Плоди великі 180–220 г, яскраво-червоні. М'якоть соковита, кисло-солодка. Зберігається до травня. Відмінна транспортабельність.\n💧 Полив: регулярний, 3–4 рази на місяць у спеку.\n✂️ Обрізка: потребує сильного проріджування — схильний до загущення.\n🌱 Підживлення: азот в квітні, калій у серпні.\n🛡️ Хвороби: сприйнятливий до борошнистої роси, обробка сіркою." },
+    { sort:'Слава переможцям', desc:"Ранньоосінній сорт українського походження. Плоди 150–180 г, жовто-зелені з рум'янцем. М'якоть кремова, ароматна. Дозрівання: серпень–вересень. Не зберігається понад місяць.\n💧 Полив: регулярний з травня по серпень.\n✂️ Обрізка: помірна, формування розріджено-ярусної крони.\n🌱 Підживлення: органіка щоосені, мінеральне навесні.\n🛡️ Хвороби: середня стійкість, профілактика борошнистої роси." },
   ],
   pear: [
-    { sort:'Аббот',        desc:"Ранній десертний сорт французької селекції. Плоди 140–180 г, жовто-зелені. М'якоть масляниста, дуже соковита, тане в роті. Дозрівання: серпень." },
-    { sort:'Конфіскація',  desc:"Осінній сорт. Плоди великі, соковиті, ароматні. Зимостійке дерево. Підходить для соку та компотів. Дозрівання: вересень." },
-    { sort:'Вільямс',      desc:"Класичний літній сорт. Плоди 150–180 г, жовті з рум'янцем. Ніжна м'якоть з мускатним ароматом. Відомий як Бер Жиффар." },
-    { sort:'Конференція',  desc:"Бельгійський сорт. Плоди 140–160 г, видовжені, зеленувато-коричневі. М'якоть кремова, солодка. Зберігається до грудня. Самоплідний." },
-    { sort:'Колетт',       desc:"Ранньоосінній сорт. Плоди 180–220 г, жовто-зелені. Соковита, масляниста м'якоть. Відмінний десертний смак." },
+    { sort:'Аббот', desc:"Ранній десертний сорт французької селекції. Плоди 140–180 г, жовто-зелені. М'якоть масляниста, дуже соковита, тане в роті. Дозрівання: серпень. Вживати одразу після збору.\n💧 Полив: рясний у червні–серпні, 20–30 л/дерево.\n✂️ Обрізка: помірна, підтримання пірамідальної крони.\n🌱 Підживлення: азот навесні, калій після цвітіння.\n🛡️ Хвороби: стійкий до парші, профілактика від вогнівки." },
+    { sort:'Конфіскація', desc:"Старовинний осінній сорт. Плоди великі 180–220 г, жовто-зелені. М'якоть соковита, солодка з кислинкою. Зимостійке дерево. Дозрівання: вересень–жовтень.\n💧 Полив: 2–3 рази на місяць, збільшити у вересні.\n✂️ Обрізка: сильна, дерево схильне до загущення.\n🌱 Підживлення: органіка раз на 2–3 роки.\n🛡️ Хвороби: стійкий, профілактика парші навесні." },
+    { sort:'Вільямс', desc:"Класичний літній сорт. Плоди 150–180 г, жовті з рум'янцем. Ніжна м'якоть з мускатним ароматом. Зберігається 2–3 тижні. Відомий також як Бер Жиффар.\n💧 Полив: регулярний, кожні 10–14 днів.\n✂️ Обрізка: щорічна, формування розлогої крони.\n🌱 Підживлення: суперфосфат навесні, нітроамофоска в червні.\n🛡️ Хвороби: сприйнятливий до парші — 3–4 обробки за сезон." },
+    { sort:'Конференція', desc:"Бельгійський зимовий сорт. Плоди 140–160 г, видовжені, зеленувато-коричневі. М'якоть кремова, солодка. Зберігається до грудня. Самоплідний.\n💧 Полив: помірний, рясний у серпні.\n✂️ Обрізка: мінімальна, видалення старих гілок.\n🌱 Підживлення: комплексне добриво навесні і в серпні.\n🛡️ Хвороби: стійкий, профілактика від кліща." },
+    { sort:'Колетт', desc:"Ранньоосінній великоплідний сорт. Плоди 180–220 г, жовто-зелені. Соковита, масляниста м'якоть. Відмінний десертний смак. Дозрівання: вересень.\n💧 Полив: регулярний протягом усього сезону.\n✂️ Обрізка: помірна, проріджування крони.\n🌱 Підживлення: органіка восени, азот навесні.\n🛡️ Хвороби: середня стійкість до парші." },
   ],
   cherry: [
-    { sort:'Валерій Чкалов', desc:"Ранній сорт. Ягоди великі 7–9 г, темно-червоні, майже чорні. Соковита, солодка м'якоть. Дозрівання: кінець травня–червень." },
-    { sort:'Крупноплідна',   desc:"Середньостиглий сорт. Ягоди 8–10 г, темно-червоні. Відмінний смак, соковита м'якоть. Висока врожайність." },
-    { sort:'Мелітопольська чорна', desc:"Пізній сорт. Ягоди 7–8 г, майже чорні. Десертний смак, щільна м'якоть. Зберігається до 14 днів. Дозрівання: липень." },
-    { sort:'Дрогана жовта',  desc:"Середньостиглий сорт. Ягоди 6–7 г, жовті з рожевим боком. Солодка м'якоть. Слабо вражається моніліозом." },
-    { sort:'Регіна',         desc:"Пізній сорт. Ягоди великі 9–11 г, темно-червоні. Відмінний смак, вільна кісточка. Відмінна транспортабельність." },
+    { sort:'Валерій Чкалов', desc:"Ранній великоплідний сорт. Ягоди 7–9 г, темно-червоні, майже чорні. Соковита, солодка м'якоть. Дозрівання: кінець травня–червень. Відмінний десертний смак.\n💧 Полив: помірний, уникати перезволоження.\n✂️ Обрізка: санітарна щороку, формування розріджено-ярусної крони.\n🌱 Підживлення: азот навесні, фосфор-калій у липні.\n🛡️ Хвороби: обробка від моніліозу після цвітіння." },
+    { sort:'Крупноплідна', desc:"Середньостиглий сорт. Ягоди 8–10 г, темно-червоні. Відмінний смак, соковита щільна м'якоть. Висока врожайність. Дозрівання: червень–липень.\n💧 Полив: 2–3 рази на місяць у посушливий період.\n✂️ Обрізка: щорічна, підтримання висоти дерева до 3–4 м.\n🌱 Підживлення: комплексне NPK в квітні.\n🛡️ Хвороби: стійка, профілактика кластероспоріозу." },
+    { sort:'Мелітопольська чорна', desc:"Пізній сорт. Ягоди 7–8 г, майже чорні. Десертний смак, щільна м'якоть. Зберігається до 14 днів. Транспортабельна. Дозрівання: липень.\n💧 Полив: помірний, не допускати застою води.\n✂️ Обрізка: проріджування крони, видалення вовчків.\n🌱 Підживлення: суперфосфат і калій у серпні для закладки бруньок.\n🛡️ Хвороби: обробка мідним купоросом навесні." },
+    { sort:'Дрогана жовта', desc:"Середньостиглий сорт. Ягоди 6–7 г, жовті з рожевим боком. Солодка ніжна м'якоть. Слабо вражається моніліозом. Дозрівання: червень.\n💧 Полив: регулярний у травні–червні.\n✂️ Обрізка: мінімальна, видалення хворих гілок.\n🌱 Підживлення: азотне добриво навесні.\n🛡️ Хвороби: висока стійкість до моніліозу — перевага сорту." },
+    { sort:'Регіна', desc:"Пізній великоплідний сорт. Ягоди 9–11 г, темно-червоні, блискучі. Відмінний смак, вільна кісточка. Відмінна транспортабельність. Дозрівання: кінець липня.\n💧 Полив: помірний, не мочити плоди перед збором.\n✂️ Обрізка: щорічна санітарна, підтримання компактної крони.\n🌱 Підживлення: комплексне у квітні та після збору.\n🛡️ Хвороби: стійка до розтріскування, обробка від плодожерки." },
   ],
   vishnya: [
-    { sort:'Мелітопольська', desc:"Самоплідний сорт (УААН, 1983). Ягоди темно-червоні, великі, соковиті, кисло-солодкі. Зимостійкість до −30°C. Дозрівання: липень." },
-    { sort:'Лотівка',        desc:"Зимостійкий самоплідний сорт. Ягоди 4–5 г, темно-червоні. Кисло-солодкий смак. Хороша врожайність. Стійкий до кокомікозу." },
-    { sort:'Тургенівка',     desc:"Середньостиглий сорт. Ягоди 5–6 г, темно-бордові. Кисло-солодкий смак. Підходить для варення, компотів, вишнівки." },
-    { sort:'Норд стар',      desc:"Канадський карликовий сорт. Ягоди 3–4 г, темно-червоні. Кислий смак. Відмінна морозостійкість до −40°C. Для малих садів." },
-    { sort:'Шпанка',         desc:"Старовинний сорт. Ягоди 5–6 г, жовто-рожеві. Солодкий смак. Дерево сильнорослe. Дозрівання: кінець червня." },
+    { sort:'Мелітопольська', desc:"Самоплідний сорт (УААН, 1983). Ягоди темно-червоні, великі, соковиті, кисло-солодкі. Зимостійкість до −30°C. Щорічне плодоношення. Дозрівання: липень.\n💧 Полив: 3–4 рази за сезон, по 15–20 л.\n✂️ Обрізка: щорічне проріджування, омолодження старих гілок.\n🌱 Підживлення: азот у квітні, суперфосфат у серпні.\n🛡️ Хвороби: стійка до кокомікозу, профілактика монліозу." },
+    { sort:'Лотівка', desc:"Зимостійкий самоплідний сорт. Ягоди 4–5 г, темно-червоні. Кисло-солодкий смак. Хороша врожайність. Стійкий до кокомікозу.\n💧 Полив: помірний, 2–3 рази на місяць.\n✂️ Обрізка: щорічна, формування кущоподібної крони.\n🌱 Підживлення: органіка раз на 2 роки, мінеральне щороку.\n🛡️ Хвороби: висока стійкість до грибкових хвороб." },
+    { sort:'Тургенівка', desc:"Середньостиглий сорт. Ягоди 5–6 г, темно-бордові. Кисло-солодкий смак. Підходить для варення, компотів, вишнівки. Дозрівання: липень.\n💧 Полив: регулярний у посушливі роки.\n✂️ Обрізка: помірна, видалення загущуючих пагонів.\n🌱 Підживлення: нітроамофоска навесні.\n🛡️ Хвороби: сприйнятлива до кокомікозу — обробка фунгіцидами." },
+    { sort:'Норд стар', desc:"Канадський карликовий самоплідний сорт. Ягоди 3–4 г, темно-червоні. Кислий смак. Морозостійкість до −40°C. Ідеальний для малих садів.\n💧 Полив: помірний, стійкий до посухи.\n✂️ Обрізка: мінімальна завдяки карликовому росту.\n🌱 Підживлення: комплексне раз на рік навесні.\n🛡️ Хвороби: відмінна стійкість до хвороб." },
+    { sort:'Шпанка', desc:"Старовинний народний сорт. Ягоди 5–6 г, жовто-рожеві. Солодкий смак. Дерево сильнорослe до 6–8 м. Дозрівання: кінець червня.\n💧 Полив: рясний у червні.\n✂️ Обрізка: обов'язкове обмеження висоти дерева.\n🌱 Підживлення: органіка восени.\n🛡️ Хвороби: стійкий, мінімальна обробка." },
   ],
   plum: [
-    { sort:'Штутгард',      desc:"Середньостиглий сорт. Плоди 40–55 г, темно-фіолетові з восковим нальотом. М'якоть жовта, кисло-солодка. Дозрівання: серпень–вересень." },
-    { sort:'Угорка',        desc:"Класичний сорт. Плоди 30–40 г, темно-фіолетові. Відмінна для сушіння та чорносливу. Самоплідна. Дозрівання: вересень." },
-    { sort:'Блюфрі',        desc:"Американський сорт. Плоди великі 60–80 г, темно-сині. Солодкий смак. Самоплідна. Висока врожайність. Дозрівання: серпень." },
-    { sort:'Ренклод зелений', desc:"Старовинний французький сорт. Плоди 40–60 г, зеленувато-жовті. Соковита, дуже солодка м'якоть. Дозрівання: серпень." },
-    { sort:'Стенлі',        desc:"Американський сорт. Плоди 50–60 г, темно-фіолетові. Солодка м'якоть, відмінна для консервування. Самоплідна." },
+    { sort:'Штутгард', desc:"Угорська слива, середньостиглий сорт. Плоди 40–55 г, темно-фіолетові з восковим нальотом. М'якоть жовта, кисло-солодка, відділяється від кісточки. Дозрівання: серпень–вересень.\n💧 Полив: рясний під час наливу плодів у серпні.\n✂️ Обрізка: щорічне проріджування, видалення кореневої порослі.\n🌱 Підживлення: калій після цвітіння, азот навесні.\n🛡️ Хвороби: обробка від сливової плодожерки у червні–липні." },
+    { sort:'Угорка', desc:"Класичний сорт для чорносливу. Плоди 30–40 г, темно-фіолетові, овальні. Кісточка легко відділяється. Самоплідна. Дозрівання: вересень.\n💧 Полив: помірний, збільшити у вересні.\n✂️ Обрізка: проріджування крони раз на 2–3 роки.\n🌱 Підживлення: суперфосфат і калій у серпні.\n🛡️ Хвороби: стійка, профілактика від сірої гнилі." },
+    { sort:'Блюфрі', desc:"Американський великоплідний сорт. Плоди 60–80 г, темно-сині, округлі. Солодкий смак, соковита м'якоть. Самоплідна. Висока врожайність. Дозрівання: серпень.\n💧 Полив: регулярний, по 20–25 л двічі на місяць.\n✂️ Обрізка: щорічне проріджування, нормування врожаю.\n🌱 Підживлення: комплексне NPK навесні та у червні.\n🛡️ Хвороби: обробка від клястероспоріозу." },
+    { sort:'Ренклод зелений', desc:"Старовинний французький сорт. Плоди 40–60 г, зеленувато-жовті, округлі. Дуже солодка, соковита м'якоть. Відмінний десертний смак. Дозрівання: серпень.\n💧 Полив: помірний але регулярний.\n✂️ Обрізка: формуюча у перші роки, підтримуюча надалі.\n🌱 Підживлення: органіка раз на 2 роки.\n🛡️ Хвороби: середня стійкість, стандартна профілактика." },
+    { sort:'Стенлі', desc:"Американський сорт. Плоди 50–60 г, темно-фіолетові, видовжені. Солодка щільна м'якоть. Відмінна для консервування і заморозки. Самоплідна.\n💧 Полив: 2–3 рази на місяць у спеку.\n✂️ Обрізка: помірна щорічна.\n🌱 Підживлення: азот навесні, фосфор-калій влітку.\n🛡️ Хвороби: стійка до більшості хвороб сливи." },
   ],
   apricot: [
-    { sort:'Ананасовий',    desc:"Самоплідний кримський сорт. Плоди 40–50 г, жовті, дуже соковиті з ананасовим ароматом. Кісточка легко відділяється. Дозрівання: липень." },
-    { sort:'Краснощокий',   desc:"Класичний сорт. Плоди 50–60 г, жовто-оранжеві з яскравим рум'янцем. Солодкий, соковитий. Широко використовується для консервування." },
-    { sort:'Айсберг',       desc:"Пізній зимостійкий сорт. Плоди великі 60–80 г, жовто-оранжеві. Солодкий смак. Стійкий до хвороб. Дозрівання: кінець липня." },
-    { sort:'Шалах',         desc:"Середньостиглий сорт. Плоди 60–80 г, жовто-оранжеві. Солодкий смак, щільна м'якоть. Добра транспортабельність." },
-    { sort:'Лель',          desc:"Ранній сорт. Плоди 20–25 г, жовтогарячі. Кисло-солодкий освіжаючий смак. Дозрівання: початок липня. Добрий для варення." },
+    { sort:'Ананасовий', desc:"Самоплідний кримський сорт. Плоди 40–50 г, жовті, з ананасовим ароматом. Кісточка легко відділяється. Дозрівання: липень. Відмінний для варення і компотів.\n💧 Полив: помірний, не переливати — не любить застою води.\n✂️ Обрізка: щорічна формуюча, підтримання чашоподібної крони.\n🌱 Підживлення: азот у квітні, калій після цвітіння.\n🛡️ Хвороби: профілактика від монліозу та клястероспоріозу." },
+    { sort:'Краснощокий', desc:"Класичний масовий сорт. Плоди 50–60 г, жовто-оранжеві з яскравим рум'янцем. Солодкий, соковитий. Дозрівання: липень. Широко використовується для консервування.\n💧 Полив: 3–4 рази за сезон по 20 л.\n✂️ Обрізка: щорічна, видалення хворих і загущуючих гілок.\n🌱 Підживлення: нітроамофоска навесні.\n🛡️ Хвороби: обробка мідовмісними препаратами після цвітіння." },
+    { sort:'Айсберг', desc:"Пізній зимостійкий сорт. Плоди великі 60–80 г, жовто-оранжеві. Солодкий смак, щільна м'якоть. Стійкий до хвороб. Дозрівання: кінець липня–серпень.\n💧 Полив: помірний, регулярний.\n✂️ Обрізка: мінімальна завдяки хорошій природній формі крони.\n🌱 Підживлення: комплексне добриво навесні.\n🛡️ Хвороби: висока стійкість — мінімальна обробка." },
+    { sort:'Шалах', desc:"Середньостиглий великоплідний сорт. Плоди 60–80 г, жовто-оранжеві. Солодкий смак, щільна м'якоть. Добра транспортабельність. Дозрівання: липень.\n💧 Полив: регулярний у червні–липні.\n✂️ Обрізка: щорічна проріджуюча.\n🌱 Підживлення: суперфосфат у серпні для наступного року.\n🛡️ Хвороби: обробка від плодожерки у червні." },
+    { sort:'Лель', desc:"Ранній дрібноплідний сорт. Плоди 20–25 г, жовтогарячі. Кисло-солодкий освіжаючий смак. Дозрівання: початок липня. Добрий для варення і джемів.\n💧 Полив: помірний, стійкий до посухи.\n✂️ Обрізка: мінімальна.\n🌱 Підживлення: азот навесні.\n🛡️ Хвороби: стійкий, стандартна профілактика." },
   ],
   peach: [
-    { sort:'Ред Хейвен',    desc:"Американська селекція 1940-х. Плоди 150–200 г, жовто-оранжеві з карміновим рум'янцем. М'якоть кремова, солодка, соковита. Дегустація 4,9/5." },
-    { sort:'Коллінз',       desc:"Ранній сорт. Плоди 130–150 г, жовтуваті з рум'янцем. М'якоть жовта, соковита, солодка. Дозрівання: кінець липня." },
-    { sort:'Редтоп',        desc:"Середньостиглий сорт. Плоди 150–170 г, жовті з яскраво-червоним рум'янцем. Відмінний смак. Добра транспортабельність." },
-    { sort:'Сонячний',      desc:"Пізній сорт. Плоди 130–150 г, жовті. Солодкий, ароматний. Зберігається довше за більшість сортів. Дозрівання: серпень." },
+    { sort:'Ред Хейвен', desc:"Американська селекція 1940-х, еталонний сорт. Плоди 150–200 г, жовто-оранжеві з карміновим рум'янцем. М'якоть кремова, солодка, без волокон. Дегустація 4,9/5. Дозрівання: серпень.\n💧 Полив: рясний у липні–серпні, 25–30 л/дерево.\n✂️ Обрізка: сильна щорічна — персик плодоносить на однорічних приростах.\n🌱 Підживлення: азот у квітні, калій після цвітіння, фосфор у серпні.\n🛡️ Хвороби: обробка від кучерявості листя навесні міддю." },
+    { sort:'Коллінз', desc:"Ранній американський сорт. Плоди 130–150 г, жовтуваті з рум'янцем. М'якоть жовта, соковита, солодка. Дозрівання: кінець липня. Кісточка напіввільна.\n💧 Полив: регулярний кожні 10–14 днів.\n✂️ Обрізка: щорічна сильна навесні.\n🌱 Підживлення: комплексне NPK навесні.\n🛡️ Хвороби: обробка від кучерявості у фазі зеленого конуса." },
+    { sort:'Редтоп', desc:"Середньостиглий італійський сорт. Плоди 150–170 г, жовті з яскраво-червоним рум'янцем на 80% поверхні. Відмінний смак. Добра транспортабельність. Дозрівання: серпень.\n💧 Полив: рясний у серпні при наливі плодів.\n✂️ Обрізка: щорічна сильна, формування чашоподібної крони.\n🌱 Підживлення: органіка восени раз на 2–3 роки.\n🛡️ Хвороби: стійкий, профілактика від плодожерки." },
+    { sort:'Сонячний', desc:"Пізній вітчизняний сорт. Плоди 130–150 г, жовті. Солодкий, ароматний. Зберігається 2–3 тижні — довше більшості сортів. Дозрівання: кінець серпня.\n💧 Полив: помірний, рясний лише у вересні.\n✂️ Обрізка: помірна, персик добре відновлюється.\n🌱 Підживлення: суперфосфат і сульфат калію у серпні.\n🛡️ Хвороби: хороша стійкість, обробка раз на сезон." },
   ],
   currant: [
-    { sort:'Пілот Александр Мамкін', desc:"Сорт з великими ягодами. Кисло-солодкий смак. Врожайний. Стійкий до борошнистої роси та антракнозу." },
-    { sort:'Ядреная',       desc:"Великоплідний сорт. Ягоди 2–5 г, відмінний смак. Висока врожайність. Зимостійкий." },
-    { sort:'Лентяй',        desc:"Великоплідний сорт. Ягоди 2,5–4 г. Солодкий смак. Самоплідний. Стійкий до борошнистої роси." },
-    { sort:'Чорний перл',   desc:"Ранній сорт. Ягоди великі до 3 г. Відмінний смак. Дуже врожайний. Слабо уражується хворобами." },
+    { sort:'Пілот Александр Мамкін', desc:"Великоплідний сорт чорної смородини. Ягоди 2–5 г, чорні, кисло-солодкі. Врожайність 3–5 кг/куща. Стійкий до борошнистої роси та антракнозу.\n💧 Полив: рясний під час цвітіння і дозрівання, по 20–30 л.\n✂️ Обрізка: щороку видаляти пагони старше 4–5 років.\n🌱 Підживлення: азот навесні, калій після збору ягід.\n🛡️ Хвороби: стійкий — мінімальна обробка." },
+    { sort:'Ядреная', desc:"Великоплідний сорт. Ягоди 2–5 г — одні з найбільших. Відмінний смак. Висока врожайність 4–6 кг. Зимостійкий до −35°C.\n💧 Полив: рясний, смородина любить вологу.\n✂️ Обрізка: систематичне оновлення куща — залишати 12–15 різновікових гілок.\n🌱 Підживлення: органіка раз на 2 роки, мінеральне щороку.\n🛡️ Хвороби: обробка від смородинового кліща навесні." },
+    { sort:'Лентяй', desc:"Великоплідний десертний сорт. Ягоди 2,5–4 г, чорні, блискучі. Солодкий смак. Самоплідний. Стійкий до борошнистої роси.\n💧 Полив: помірний але регулярний.\n✂️ Обрізка: видалення старих гілок щороку.\n🌱 Підживлення: азот навесні, суперфосфат восени.\n🛡️ Хвороби: висока стійкість до борошнистої роси." },
+    { sort:'Чорний перл', desc:"Ранній високоврожайний сорт. Ягоди великі до 3 г, чорні. Відмінний смак. Врожайність 5–7 кг/куща. Слабо уражується хворобами.\n💧 Полив: рясний у червні–липні.\n✂️ Обрізка: щорічна, залишати до 15 гілок різного віку.\n🌱 Підживлення: нітроамофоска у квітні та після збору.\n🛡️ Хвороби: хороша стійкість." },
   ],
   redcurrant: [
-    { sort:'Йонкер ван Тетс', desc:"Ранній сорт. Ягоди 0,8–1,2 г, ярко-червоні. Кисло-солодкий смак. Декоративна гроно. Висока врожайність." },
-    { sort:'Ролан',         desc:"Середньостиглий великоплідний сорт. Ягоди до 1,5 г. Відмінний смак. Декоративний вигляд." },
-    { sort:'Рондом',        desc:"Пізній сорт. Ягоди 0,9–1,1 г. Кисло-солодкий смак. Зимостійкий. Хороша врожайність." },
+    { sort:'Йонкер ван Тетс', desc:"Ранній великоплідний сорт. Ягоди 0,8–1,2 г, ярко-червоні, кислувато-солодкі. Декоративні грона. Висока врожайність. Дозрівання: початок липня.\n💧 Полив: регулярний, 15–20 л/куща двічі на місяць.\n✂️ Обрізка: щорічна, видалення гілок старше 5 років.\n🌱 Підживлення: азот навесні, калій після цвітіння.\n🛡️ Хвороби: обробка від антракнозу навесні." },
+    { sort:'Ролан', desc:"Середньостиглий великоплідний сорт. Ягоди до 1,5 г, великі для порічки. Відмінний кисло-солодкий смак. Декоративний вигляд.\n💧 Полив: помірний, регулярний.\n✂️ Обрізка: щорічна формуюча.\n🌱 Підживлення: комплексне добриво навесні.\n🛡️ Хвороби: хороша стійкість." },
+    { sort:'Рондом', desc:"Пізній зимостійкий сорт. Ягоди 0,9–1,1 г, яскраво-червоні. Кисло-солодкий смак. Добре зберігається на кущі. Хороша врожайність.\n💧 Полив: помірний.\n✂️ Обрізка: мінімальна.\n🌱 Підживлення: органіка раз на 2 роки.\n🛡️ Хвороби: стійкий." },
   ],
   blueberry: [
-    { sort:'Блюкроп',       desc:"Найпопулярніший промисловий сорт. Ягоди великі, блакитно-сизі, з легкою кислинкою. Потребує кислого ґрунту pH 4,5–5,5. Дозрівання: серпень." },
-    { sort:'Патріот',       desc:"Ранній сорт. Ягоди великі, смачні, ароматні. Зимостійкий. Кущ до 1,8 м. Дозрівання: кінець липня." },
-    { sort:'Дюк',           desc:"Ранній сорт. Ягоди середні, щільні, солодкі. Дуже зимостійкий. Менш вибагливий до кислотності ґрунту." },
-    { sort:'Нельсон',       desc:"Пізній сорт. Ягоди великі, яскраво-сині, дуже смачні. Висока врожайність. Гарний для свіжого споживання." },
-    { sort:'Спартан',       desc:"Ранній сорт. Ягоди великі, світло-блакитні. Відмінний смак. Потребує хорошого дренажу." },
+    { sort:'Блюкроп', desc:"Найпопулярніший промисловий сорт. Ягоди великі, блакитно-сизі, щільні. З легкою кислинкою. Потребує кислого ґрунту pH 4,5–5,5. Дозрівання: серпень.\n💧 Полив: рясний, не допускати пересихання — дощування крапельне.\n✂️ Обрізка: видалення слабких пагонів, омолодження кожні 6–8 років.\n🌱 Підживлення: добрива для рослин кислого ґрунту (азалія, рододендрон).\n🛡️ Хвороби: мульчування хвоєю або тирсою для підтримки pH." },
+    { sort:'Патріот', desc:"Ранній великоплідний сорт. Ягоди великі, смачні, ароматні. Зимостійкий до −30°C. Кущ до 1,8 м. Дозрівання: кінець липня.\n💧 Полив: крапельне, підтримувати вологість ґрунту.\n✂️ Обрізка: щорічна навесні, видалення старих гілок.\n🌱 Підживлення: сірчанокислий амоній для підкислення.\n🛡️ Хвороби: стійкий, контроль pH ґрунту." },
+    { sort:'Дюк', desc:"Ранній надзимостійкий сорт. Ягоди середні, щільні, солодкі. Менш вибагливий до кислотності ґрунту. Відмінний для початківців.\n💧 Полив: регулярний, мульчування для утримання вологи.\n✂️ Обрізка: помірна щорічна.\n🌱 Підживлення: мінімальне, раз на рік.\n🛡️ Хвороби: висока стійкість." },
+    { sort:'Нельсон', desc:"Пізній великоплідний сорт. Ягоди великі, яскраво-сині, дуже смачні, солодкі. Висока врожайність. Відмінний для свіжого споживання.\n💧 Полив: рясний у серпні–вересні при дозріванні.\n✂️ Обрізка: щорічна, підтримання компактності.\n🌱 Підживлення: комплексне для кислих ґрунтів.\n🛡️ Хвороби: стійкий." },
+    { sort:'Спартан', desc:"Ранній великоплідний сорт. Ягоди великі, світло-блакитні, відмінного смаку. Потребує хорошого дренажу. Не переносить застою води.\n💧 Полив: помірний, хороший дренаж обов'язковий.\n✂️ Обрізка: щорічна санітарна.\n🌱 Підживлення: підкислювачі ґрунту навесні.\n🛡️ Хвороби: стійкий при правильному pH." },
+    { sort:'Блюголд', desc:"Американський середньопізній сорт (Bluegold). Ягоди середні, світло-блакитні, з тонкою шкіркою і м'яким солодким смаком. Кущ компактний 1,2–1,5 м. Зимостійкий. Дозрівання: серпень. Самобезплідний — потребує запилювача (Блюкроп, Патріот).\n💧 Полив: крапельне, підтримувати рівномірну вологість — не пересихати і не перезволожувати.\n✂️ Обрізка: щорічна навесні, видалення слабких і старих (7+ років) гілок.\n🌱 Підживлення: добрива для кислих ґрунтів, сірчанокислий амоній — pH 4,5–5,5 обов'язково.\n🛡️ Хвороби: стійкий, мульчування хвоєю або тирсою для підтримки pH і вологи." },
   ],
   pine: [
-    { sort:'Звичайна (Sylvestris)', desc:"Невибаглива, морозостійка. Росте на бідних ґрунтах. Висота до 30 м. Декоративна крона, червонувата кора. Живе 300–500 років." },
-    { sort:'Чорна (Nigra)',         desc:"Середземноморська сосна. Темно-зелена хвоя. Декоративна, стійка до міського повітря. Висота 20–30 м." },
-    { sort:'Мопс (Mops)',           desc:"Карликова куляста форма. Висота 1–2 м. Ідеальна для малих садів і контейнерів. Повільно росте." },
-    { sort:'Веймутова',             desc:"Північноамериканська сосна. М'яка сіро-зелена хвоя. Висока, до 50 м. Цінна декоративна порода." },
+    { sort:'Звичайна (Sylvestris)', desc:"Невибаглива, морозостійка. Росте на бідних піщаних ґрунтах. Висота до 30 м. Декоративна червонувата кора. Живе 300–500 років.\n💧 Полив: не потребує — посухостійка.\n✂️ Обрізка: видалення сухих гілок, не обрізати хвою.\n🌱 Підживлення: не потребує на природних ґрунтах.\n🛡️ Хвороби: обробка від соснового шовкопряда при масовому ушкодженні." },
+    { sort:'Чорна (Nigra)', desc:"Середземноморська сосна з темно-зеленою хвоєю. Декоративна, стійка до міського повітря і посухи. Висота 20–30 м.\n💧 Полив: посухостійка, поливати лише молоді рослини.\n✂️ Обрізка: мінімальна — лише санітарна.\n🌱 Підживлення: не потребує.\n🛡️ Хвороби: стійка." },
+    { sort:'Мопс (Mops)', desc:"Карликова куляста форма звичайної сосни. Висота 1–2 м за 10 років. Ідеальна для малих садів і контейнерів. Повільно росте.\n💧 Полив: помірний, не переливати.\n✂️ Обрізка: не потребує — природна кулеподібна форма.\n🌱 Підживлення: добриво для хвойних навесні.\n🛡️ Хвороби: стійка." },
+    { sort:'Веймутова', desc:"Північноамериканська сосна з м'якою сіро-зеленою хвоєю. Висока до 50 м. Швидко росте. Цінна декоративна порода.\n💧 Полив: молоді рослини поливати регулярно.\n✂️ Обрізка: формуюча у перші роки.\n🌱 Підживлення: добриво для хвойних раз на рік.\n🛡️ Хвороби: сприйнятлива до іржі — не садити поряд з порічкою." },
   ],
   spruce: [
-    { sort:'Звичайна (Abies)',      desc:"Класична ялина. Висота до 50 м. Конусоподібна крона. Морозостійка. Живе 300+ років." },
-    { sort:'Коліка (Glauca)',       desc:"Блакитна ялина. Декоративна блакитно-срібляста хвоя. Висота 10–15 м. Популярна в озелененні." },
-    { sort:'Глаука Глобоза',        desc:"Карликова блакитна ялина. Кругла крона 1–2 м. Ідеальна для клумб і рокаріїв." },
-    { sort:'Нідіформіс',            desc:"Карликова гніздоподібна форма. Висота до 1 м. Декоративна, повільно росте." },
+    { sort:'Звичайна (Abies)', desc:"Класична ялина. Висота до 50 м. Конусоподібна крона. Морозостійка. Живе 300+ років. Повільно росте у перші роки.\n💧 Полив: молоді рослини поливати у посуху.\n✂️ Обрізка: не обрізати — руйнує природну форму.\n🌱 Підживлення: добриво для хвойних навесні.\n🛡️ Хвороби: обробка від ялинового павутинного кліща у спеку." },
+    { sort:'Коліка (Glauca)', desc:"Блакитна колюча ялина. Блакитно-срібляста хвоя. Висота 10–15 м. Дуже декоративна, популярна в озелененні.\n💧 Полив: помірний, не любить сухість.\n✂️ Обрізка: мінімальна, лише формуюча.\n🌱 Підживлення: добриво для хвойних навесні.\n🛡️ Хвороби: обробка від кліща при пожовтінні хвої." },
+    { sort:'Глаука Глобоза', desc:"Карликова блакитна ялина. Кругла компактна крона 1–2 м. Ідеальна для клумб, рокаріїв, контейнерів. Повільно росте.\n💧 Полив: помірний, підтримувати вологість.\n✂️ Обрізка: не потребує — природна округла форма.\n🌱 Підживлення: добриво для хвойних 1 раз на рік.\n🛡️ Хвороби: стійка." },
+    { sort:'Нідіформіс', desc:"Карликова гніздоподібна форма ялини. Висота до 1 м. Декоративна, дуже повільно росте. Ідеальна для альпінарію.\n💧 Полив: регулярний, невеликими порціями.\n✂️ Обрізка: не потребує.\n🌱 Підживлення: мінімальне.\n🛡️ Хвороби: стійка." },
   ],
   thuja: [
-    { sort:'Смарагд',               desc:"Вузька колоноподібна форма. Висота 4–5 м. Зелена цілий рік. Ідеальна для живоплоту." },
-    { sort:'Брабант',               desc:"Швидкоросла форма. Висота до 5 м. М'яка яскраво-зелена хвоя. Відмінна для парканів." },
-    { sort:'Даніка',                desc:"Карликова куляста туя. Висота 0,5–1 м. Декоративна, щільна. Популярна в контейнерах." },
-    { sort:'Голд Смарагд',          desc:"Вузька колонна з золотистим відтінком. Ефектна в поєднанні зі Смарагдом." },
+    { sort:'Смарагд', desc:"Найпопулярніша туя. Вузька колоноподібна форма, висота 4–5 м. Яскраво-зелена цілий рік, не бронзовіє. Ідеальна для живоплоту і алей.\n💧 Полив: регулярний, особливо у перший рік після посадки.\n✂️ Обрізка: 1–2 рази на рік для підтримання форми.\n🌱 Підживлення: добриво для хвойних навесні.\n🛡️ Хвороби: обробка від туєвої попелиці при ушкодженні." },
+    { sort:'Брабант', desc:"Швидкоросла форма туї. Висота до 5 м, приріст 30–40 см на рік. М'яка яскраво-зелена хвоя. Відмінна для живоплоту.\n💧 Полив: рясний, особливо у спеку — туя любить вологу.\n✂️ Обрізка: 2–3 рази на рік для густого живоплоту.\n🌱 Підживлення: добриво для хвойних навесні і в червні.\n🛡️ Хвороби: бронзовіє взимку — норма, навесні зеленіє." },
+    { sort:'Даніка', desc:"Карликова куляста туя. Висота 0,5–1 м за 10 років. Декоративна, щільна. Популярна в контейнерах і клумбах.\n💧 Полив: помірний, регулярний.\n✂️ Обрізка: не потребує.\n🌱 Підживлення: добриво для хвойних 1 раз навесні.\n🛡️ Хвороби: стійка." },
+    { sort:'Голд Смарагд', desc:"Вузька колонна туя з золотисто-жовтою хвоєю. Висота 3–4 м. Ефектна в поєднанні з зеленим Смарагдом.\n💧 Полив: регулярний.\n✂️ Обрізка: мінімальна, підтримання форми.\n🌱 Підживлення: добриво для хвойних навесні.\n🛡️ Хвороби: стійка." },
   ],
   juniper: [
-    { sort:'Козацький (Sabina)',     desc:"Розстелений кущ. Висота 1–1,5 м. Відмінний ґрунтопокривний. Невибагливий, посухостійкий." },
-    { sort:'Скайрокет',             desc:"Вузька колоноподібна форма. Висота до 8 м. Голубувато-зелений. Ефектний акцент у саду." },
-    { sort:'Блю Арроу',             desc:"Вузька синьо-зелена колона. Висота 3–4 м. Декоративна, компактна." },
-    { sort:'Голд Кон',              desc:"Колонна форма із золотистою хвоєю. Висота 3–4 м. Ефектна колірна пляма." },
+    { sort:'Козацький (Sabina)', desc:"Розстелений кущ, висота 1–1,5 м, ширина до 3 м. Відмінний ґрунтопокривний. Невибагливий, посухостійкий. Увага: всі частини отруйні!\n💧 Полив: посухостійкий, поливати лише молоді рослини.\n✂️ Обрізка: мінімальна, для обмеження розповсюдження.\n🌱 Підживлення: не потребує.\n🛡️ Хвороби: стійкий." },
+    { sort:'Скайрокет', desc:"Вузька колоноподібна форма, висота до 8 м. Голубувато-зелений. Ефектний акцент у саду. Морозостійкий.\n💧 Полив: посухостійкий.\n✂️ Обрізка: мінімальна.\n🌱 Підживлення: добриво для хвойних раз на рік.\n🛡️ Хвороби: обробка від іржі при появі помаранчевих нальотів." },
+    { sort:'Блю Арроу', desc:"Вузька синьо-зелена колона. Висота 3–4 м. Декоративна, компактна. Не розпадається під снігом.\n💧 Полив: посухостійкий.\n✂️ Обрізка: мінімальна.\n🌱 Підживлення: добриво для хвойних навесні.\n🛡️ Хвороби: стійкий." },
+    { sort:'Голд Кон', desc:"Колонна форма із золотисто-жовтою хвоєю. Висота 3–4 м. Ефектна колірна пляма в саду. Зимостійкий.\n💧 Полив: посухостійкий.\n✂️ Обрізка: не потребує.\n🌱 Підживлення: добриво для хвойних навесні.\n🛡️ Хвороби: стійкий." },
   ],
   oak: [
-    { sort:'Черешчатий (Robur)',    desc:"Найпоширеніший вид. Висота 30–40 м. Живе 1000+ років. Цінна деревина. Поживний жолудь для тварин." },
-    { sort:'Червоний (Rubra)',      desc:"Північноамериканський вид. Осіннє листя вогненно-червоне. Висота 20–25 м. Декоративний." },
-    { sort:'Скельний (Petraea)',    desc:"Гірська порода. Менш вибагливий до ґрунту. Висота до 30 м. Цінна деревина." },
+    { sort:'Черешчатий (Robur)', desc:"Найпоширеніший вид дуба. Висота 30–40 м. Живе 500–1000 років. Цінна деревина. Жолуді — корм для тварин. Повільно росте у перші роки.\n💧 Полив: посухостійкий після встановлення.\n✂️ Обрізка: формуюча у перші 5 років, потім санітарна.\n🌱 Підживлення: не потребує на природних ґрунтах.\n🛡️ Хвороби: обробка від борошнистої роси при масовому ушкодженні." },
+    { sort:'Червоний (Rubra)', desc:"Північноамериканський вид. Осіннє листя вогненно-червоне — головна декоративна перевага. Висота 20–25 м. Швидше росте ніж черешчатий.\n💧 Полив: молоді рослини поливати у посуху.\n✂️ Обрізка: мінімальна.\n🌱 Підживлення: не потребує.\n🛡️ Хвороби: стійкий." },
+    { sort:'Скельний (Petraea)', desc:"Гірська порода дуба. Менш вибагливий до ґрунту, росте на схилах. Висота до 30 м. Деревина цінується вище черешчатого.\n💧 Полив: посухостійкий.\n✂️ Обрізка: санітарна.\n🌱 Підживлення: не потребує.\n🛡️ Хвороби: стійкий." },
   ],
   birch: [
-    { sort:'Повисла (Pendula)',     desc:"Класична береза з плакучими гілками. Висота 20–25 м. Біла кора. Декоративна цілий рік." },
-    { sort:'Пухнаста (Pubescens)', desc:"Росте на вологих місцях. Висота до 20 м. Більш морозостійка ніж повисла." },
-    { sort:'Юнги',                 desc:"Карликова плакуча форма. Висота 4–6 м. Ідеальна для малих садів." },
+    { sort:'Повисла (Pendula)', desc:"Класична береза з плакучими гілками. Висота 20–25 м. Біла кора — головна декоративна риса. Береза цвіте у квітні, пилок — алерген.\n💧 Полив: молоді рослини поливати регулярно.\n✂️ Обрізка: лише санітарна восени (не навесні — сильне соковиділення).\n🌱 Підживлення: не потребує.\n🛡️ Хвороби: обробка від берестового трубковерта при масовому ушкодженні." },
+    { sort:'Пухнаста (Pubescens)', desc:"Росте на вологих і навіть заболочених місцях. Висота до 20 м. Більш морозостійка ніж повисла. Кора спочатку бура, потім біліє.\n💧 Полив: любить вологу, добре росте біля водойм.\n✂️ Обрізка: санітарна.\n🌱 Підживлення: не потребує.\n🛡️ Хвороби: стійка." },
+    { sort:'Юнги', desc:"Декоративна плакуча форма берези. Висота 4–6 м — компактна. Струнка, ефектна. Ідеальна для малих садів як солітер.\n💧 Полив: регулярний у перші роки.\n✂️ Обрізка: не обрізати гілки, що звисають.\n🌱 Підживлення: добриво для листяних навесні.\n🛡️ Хвороби: стійка." },
   ],
   maple: [
-    { sort:'Клен гостролистий',    desc:"Висота 20–30 м. Осіннє листя яскраво-жовте і червоне. Добре переносить морози. Декоративний." },
-    { sort:'Клен польовий',        desc:"Менший вид, до 15 м. Стійкий до посухи. Гарний для живоплоту та алей." },
-    { sort:'Атропурпуреум',        desc:"Декоративна форма з пурпуровим листям. Висота 5–7 м. Ефектна як солітер." },
+    { sort:'Клен гостролистий', desc:"Висота 20–30 м. Осіннє листя яскраво-жовте і червоне — головна декоративна перевага. Добре переносить морози і міське повітря.\n💧 Полив: посухостійкий після встановлення.\n✂️ Обрізка: формуюча у перші роки.\n🌱 Підживлення: не потребує на природних ґрунтах.\n🛡️ Хвороби: обробка від кленового борошнистого кліща." },
+    { sort:'Клен польовий', desc:"Менший вид, до 15 м. Стійкий до посухи і обрізки. Гарний для живоплоту та алей. Осіннє листя жовто-золоте.\n💧 Полив: посухостійкий.\n✂️ Обрізка: добре переносить стрижку — підходить для топіару.\n🌱 Підживлення: не потребує.\n🛡️ Хвороби: стійкий." },
+    { sort:'Атропурпуреум', desc:"Декоративна форма з пурпурово-червоним листям упродовж усього сезону. Висота 5–7 м. Ефектна як солітер або фон.\n💧 Полив: помірний, посухостійкий.\n✂️ Обрізка: мінімальна формуюча.\n🌱 Підживлення: добриво для листяних навесні.\n🛡️ Хвороби: стійкий." },
   ],
   linden: [
-    { sort:'Дрібнолиста (Cordata)', desc:"Найпопулярніша липа. Висота 30 м. Запашні квіти — цінний медонос. Чай з цвіту." },
-    { sort:'Широколиста (Platyphyllos)', desc:"Більш теплолюбна. Великі листки. Висота до 40 м. Цвіте раніше дрібнолистої." },
-    { sort:'Срібляста (Tomentosa)', desc:"Листя знизу срібляссте. Засухостійка. Висота 20–30 м. Ефектна в спеку." },
+    { sort:'Дрібнолиста (Cordata)', desc:"Найпопулярніша липа. Висота 30 м. Запашні жовті квіти у липні — цінний медонос. Чай з цвіту — народний засіб від застуди.\n💧 Полив: молоді рослини поливати рясно.\n✂️ Обрізка: добре переносить стрижку — популярна для алей.\n🌱 Підживлення: не потребує.\n🛡️ Хвороби: обробка від тлі при масовому ушкодженні." },
+    { sort:'Широколиста (Platyphyllos)', desc:"Більш теплолюбна за дрібнолисту. Великі листки. Висота до 40 м. Цвіте на 2 тижні раніше дрібнолистої.\n💧 Полив: помірний.\n✂️ Обрізка: добре переносить формування.\n🌱 Підживлення: не потребує.\n🛡️ Хвороби: стійка." },
+    { sort:'Срібляста (Tomentosa)', desc:"Листя знизу срібляссте — ефектно при вітрі. Засухостійка. Висота 20–30 м. Квіти містять наркотичну речовину — небезпечна для бджіл.\n💧 Полив: посухостійка.\n✂️ Обрізка: мінімальна.\n🌱 Підживлення: не потребує.\n🛡️ Хвороби: стійка." },
   ],
   chestnut: [
-    { sort:'Кінський (Hippocastanum)', desc:"Декоративне дерево. Квіти-свічки навесні. Висота до 25 м. Некїстивний жолудь. Алейне дерево." },
-    { sort:'Їстівний (Sativa)',     desc:"Середземноморський вид. Їстівні каштани. Висота 20–35 м. Потребує теплого клімату." },
+    { sort:'Кінський (Hippocastanum)', desc:"Декоративне дерево. Квіти-свічки навесні — головна прикраса. Висота до 25 м. Жолуді неїстівні. Популярне алейне дерево.\n💧 Полив: молоді рослини поливати у посуху.\n✂️ Обрізка: санітарна, видалення сухих гілок.\n🌱 Підживлення: не потребує.\n🛡️ Хвороби: обробка від каштанового мінера — бура плямистість листя." },
+    { sort:'Їстівний (Sativa)', desc:"Середземноморський вид. Їстівні великі каштани. Висота 20–35 м. Потребує теплого клімату — не зимостійкий в північних регіонах.\n💧 Полив: рясний у перші роки.\n✂️ Обрізка: формуюча у молодому віці.\n🌱 Підживлення: органіка раз на 2–3 роки.\n🛡️ Хвороби: обробка від каштанової чорнильної хвороби." },
   ],
   acacia: [
-    { sort:'Біла (Robinia)',        desc:"Швидкоросла акація. Запашні білі квіти. Висота до 25 м. Відмінний медонос. Стійка до посухи." },
-    { sort:'Жовта (Caragana)',      desc:"Кущова акація. Жовті квіти. Висота 2–5 м. Зимостійка. Ідеальна для живоплоту." },
+    { sort:'Біла (Robinia)', desc:"Швидкоросла акація. Запашні білі квіти у травні–червні. Висота до 25 м. Відмінний медонос. Стійка до посухи. Коренева порость — проблема.\n💧 Полив: посухостійка.\n✂️ Обрізка: регулярне видалення кореневої поросль.\n🌱 Підживлення: не потребує.\n🛡️ Хвороби: стійка." },
+    { sort:'Жовта (Caragana)', desc:"Кущова акація-карагана. Жовті квіти у травні. Висота 2–5 м. Зимостійка до −40°C. Ідеальна для живоплоту і вітрозахисних смуг.\n💧 Полив: посухостійка.\n✂️ Обрізка: добре переносить стрижку.\n🌱 Підживлення: не потребує — фіксує азот з повітря.\n🛡️ Хвороби: стійка." },
   ],
   fir: [
-    { sort:'Одноколірна (Concolor)', desc:"Блакитнувата хвоя. Висота 15–25 м. Декоративна, стійка до посухи і міського повітря." },
-    { sort:'Корейська (Koreana)',   desc:"Компактна ялиця. Висота 3–10 м. Фіолетові шишки навіть у молодому віці. Популярна в садах." },
-    { sort:'Нордмана',              desc:"Різдвяна ялиця. Темно-зелена, густа крона. Висота до 20 м. Не осипається." },
+    { sort:'Одноколірна (Concolor)', desc:"Блакитнувата хвоя з ментоловим ароматом. Висота 15–25 м. Стійка до посухи і міського повітря. Найпосухостійкіша ялиця.\n💧 Полив: посухостійка після встановлення.\n✂️ Обрізка: не потребує.\n🌱 Підживлення: добриво для хвойних навесні.\n🛡️ Хвороби: стійка." },
+    { sort:'Корейська (Koreana)', desc:"Компактна ялиця з фіолетовими шишками навіть у молодому віці. Висота 3–10 м. Дуже декоративна. Популярна в садах.\n💧 Полив: регулярний, не переносить посухи.\n✂️ Обрізка: не потребує.\n🌱 Підживлення: добриво для хвойних раз на рік.\n🛡️ Хвороби: ялицевий попелець — обробка інсектицидом." },
+    { sort:'Нордмана', desc:"Різдвяна ялиця. Темно-зелена, густа, симетрична крона. Висота до 20 м. Не осипається після зрізки. Повільно росте.\n💧 Полив: регулярний.\n✂️ Обрізка: не потребує.\n🌱 Підживлення: добриво для хвойних навесні.\n🛡️ Хвороби: стійка." },
   ],
   cedar: [
-    { sort:'Атласький (Atlantica)', desc:"Блакитнувата хвоя. Висота 15–20 м. Декоративна, конусоподібна крона. Для великих садів." },
-    { sort:'Гімалайський (Deodara)', desc:"Пониклі гілки, срібляста хвоя. Висота до 30 м. Витончений вигляд. Потребує захисту від морозів." },
-    { sort:'Кедрова сосна (Sibirica)', desc:"Сибірський кедр — реальна назва. Їстівні насіння (горіхи). Висота 35 м. Живе 800+ років." },
+    { sort:'Атласький (Atlantica)', desc:"Блакитнувата хвоя, конусоподібна крона. Висота 15–20 м. Декоративна. Потребує великої ділянки. Для теплих регіонів.\n💧 Полив: посухостійкий.\n✂️ Обрізка: мінімальна.\n🌱 Підживлення: добриво для хвойних.\n🛡️ Хвороби: стійкий." },
+    { sort:'Гімалайський (Deodara)', desc:"Пониклі гілки, срібляста хвоя. Висота до 30 м. Витончений вигляд. Потребує захисту від морозів взимку — молоді рослини вкривати.\n💧 Полив: помірний.\n✂️ Обрізка: мінімальна.\n🌱 Підживлення: добриво для хвойних навесні.\n🛡️ Хвороби: стійкий в теплих регіонах." },
+    { sort:'Кедрова сосна (Sibirica)', desc:"Сибірський кедр — справжня назва Pinus sibirica. Їстівні кедрові горіхи. Висота 35 м. Живе 800+ років. Зимостійкий до −60°C.\n💧 Полив: посухостійкий.\n✂️ Обрізка: не потребує.\n🌱 Підживлення: не потребує.\n🛡️ Хвороби: стійкий." },
   ],
 };
 
@@ -1262,9 +1566,10 @@ const SORTS_DB_BUILTIN = {
 function getSortsForType(type){
   const builtin = SORTS_DB_BUILTIN[type] || [];
   const custom  = (state.sortsDb && state.sortsDb[type]) || [];
-  // Merge: custom override builtin by sort name
+  const blacklist = (state.sortsDb?._blacklist?.[type]) || [];
+  // Merge: custom override builtin by sort name, filter blacklist
   const map = {};
-  builtin.forEach(s => map[s.sort] = s);
+  builtin.forEach(s => { if(!blacklist.includes(s.sort)) map[s.sort] = s; });
   custom.forEach(s  => map[s.sort] = s);
   return Object.values(map).sort((a,b)=>a.sort.localeCompare(b.sort,'uk'));
 }
@@ -1811,7 +2116,7 @@ function renderProfileList(){
   users.forEach(u=>{
     const btn=document.createElement('button');
     btn.className='profile-card'+(u.id===activeUserId?' active':'');
-    btn.innerHTML=`<div class="profile-avatar">${u.avatar}</div><div class="profile-name">${u.name}</div>${u.role?`<div class="profile-role">${u.role}</div>`:''}`;
+    btn.innerHTML=`<div class="profile-avatar">${u.avatarPhoto?`<img src="${u.avatarPhoto}" style="width:100%;height:100%;object-fit:cover;border-radius:50%;">`:u.avatar}</div><div class="profile-name">${u.name}</div>${u.role?`<div class="profile-role">${u.role}</div>`:''}`;
     btn.onclick=()=>{ hideProfileScreen(); switchUser(u.id); };
     el.appendChild(btn);
   });
@@ -1829,25 +2134,78 @@ function showAddProfileForm(parentId){
   document.getElementById('pf-name').value='';
   document.getElementById('pf-role').value='';
   document.getElementById('pf-avatar-val').value='👤';
+  document.getElementById('pf-avatar-photo').value='';
   const disp = document.getElementById('pf-avatar-display');
-  if(disp) disp.textContent='👤';
+  if(disp) disp.innerHTML='👤';
   document.getElementById('pf-parent-id').value=parentId||'';
   const title = document.getElementById('pf-title');
   if(title) title.textContent=parentId?"Додати члена сім'ї":'Новий профіль';
+  // Скидаємо вибір ролі
+  document.querySelectorAll('.role-btn').forEach((b,i)=>b.classList.toggle('active',i===0));
+  document.getElementById('pf-role-val').value='Тато';
 }
 function hideAddProfileForm(){
   document.getElementById('profile-form').style.display='none';
 }
 
+// ── Аватар: фото або емодзі ──
+function avatarHtml(user, size=36){
+  if(user.avatarPhoto){
+    return `<img src="${user.avatarPhoto}" style="width:${size}px;height:${size}px;border-radius:50%;object-fit:cover;flex-shrink:0;">`;
+  }
+  return `<span style="font-size:${size*0.55}px;width:${size}px;height:${size}px;border-radius:50%;background:var(--surface2);display:inline-flex;align-items:center;justify-content:center;flex-shrink:0;">${user.avatar||'👤'}</span>`;
+}
+
+function authorBadge(author){
+  if(!author) return '';
+  if(author.avatarPhoto){
+    return `<span style="display:inline-flex;align-items:center;gap:3px;font-size:.58rem;background:rgba(255,255,255,.06);border-radius:8px;padding:1px 5px;margin-left:4px;vertical-align:middle;"><img src="${author.avatarPhoto}" style="width:14px;height:14px;border-radius:50%;object-fit:cover;"> ${author.name}</span>`;
+  }
+  return `<span style="font-size:.58rem;background:rgba(255,255,255,.06);border-radius:8px;padding:1px 5px;margin-left:4px;">${author.avatar} ${author.name}</span>`;
+}
+
+function loadAvatarPhoto(input){
+  const file = input.files[0];
+  if(!file) return;
+  if(file.size > 3*1024*1024){ toast('⚠️ Фото занадто велике (макс. 3МБ)'); return; }
+  const reader = new FileReader();
+  reader.onload = e => {
+    const src = e.target.result;
+    document.getElementById('pf-avatar-photo').value = src;
+    document.getElementById('pf-avatar-val').value = '📷';
+    const display = document.getElementById('pf-avatar-display');
+    display.innerHTML = `<img src="${src}" style="width:100%;height:100%;object-fit:cover;border-radius:50%;">`;
+  };
+  reader.readAsDataURL(file);
+}
+
+function selectRole(btn){
+  document.querySelectorAll('.role-btn').forEach(b=>b.classList.remove('active'));
+  btn.classList.add('active');
+  const role = btn.dataset.role;
+  const customInput = document.getElementById('pf-role');
+  if(role === ''){
+    customInput.style.display = 'block';
+    customInput.focus();
+    document.getElementById('pf-role-val').value = '';
+  } else {
+    customInput.style.display = 'none';
+    document.getElementById('pf-role-val').value = role;
+  }
+}
+
 function saveNewProfile(){
   const name=document.getElementById('pf-name').value.trim();
   if(!name){ document.getElementById('pf-name').focus(); return; }
-  const role=document.getElementById('pf-role').value.trim();
+  const roleVal = document.getElementById('pf-role-val');
+  const roleCustom = document.getElementById('pf-role');
+  const role = roleVal ? (roleVal.value || roleCustom.value.trim()) : roleCustom.value.trim();
   const avatar=document.getElementById('pf-avatar-val').value||'👤';
+  const avatarPhoto=document.getElementById('pf-avatar-photo').value||'';
   const parentId=document.getElementById('pf-parent-id').value||null;
   const users=getUsers();
   const id='u_'+Date.now();
-  users.push({id,name,role,avatar,parentId,createdAt:new Date().toISOString()});
+  users.push({id,name,role,avatar,avatarPhoto,parentId,createdAt:new Date().toISOString()});
   saveUsers(users);
   hideAddProfileForm();
   renderProfileList();
@@ -1866,7 +2224,7 @@ function openUserMenu(){
     const header = document.createElement('div');
     header.style.cssText='display:flex;align-items:center;gap:10px;padding:10px 12px 8px;border-bottom:1px solid var(--border);margin-bottom:4px;';
     header.innerHTML=`
-      <div style="font-size:2rem;width:40px;height:40px;border-radius:50%;background:var(--surface2);display:flex;align-items:center;justify-content:center;">${user.avatar}</div>
+      <div style="font-size:2rem;width:40px;height:40px;border-radius:50%;background:var(--surface2);display:flex;align-items:center;justify-content:center;overflow:hidden;">${user.avatarPhoto?`<img src="${user.avatarPhoto}" style="width:100%;height:100%;object-fit:cover;">`:user.avatar}</div>
       <div>
         <div style="font-size:.9rem;font-weight:700;color:var(--cream);">${user.name}</div>
         ${user.role?`<div style="font-size:.68rem;color:var(--muted);">${user.role}</div>`:''}
@@ -1913,6 +2271,12 @@ function openUserMenu(){
 
   // Actions
   const sep2 = document.createElement('div'); sep2.className='um-sep'; menu.appendChild(sep2);
+
+  const editProfile = document.createElement('button');
+  editProfile.className='um-action muted';
+  editProfile.innerHTML='<span style="font-size:1rem;">🪶</span> Редагувати профіль';
+  editProfile.onclick=()=>{ closeUserMenu(); openEditProfileModal(); };
+  menu.appendChild(editProfile);
 
   const af = document.createElement('button');
   af.className='um-action gold';
@@ -2022,6 +2386,11 @@ function initDefault(){
 }
 
 let _saveTimer = null;
+// ── Firebase sync state ──
+let _fbUnsubscribe = null;
+let _fbSyncEnabled = false;
+let _fbLastSaveTime = 0;
+
 function saveData(silent){
   if(!activeUserId) return;
   state.gridCols = gridCols;
@@ -2030,6 +2399,14 @@ function saveData(silent){
   state.gateSize = gateSize;
   const gid = activeGardenId || 'g_default';
   localStorage.setItem(gardenStorageKey(activeUserId, gid), JSON.stringify(state));
+
+  // Firebase sync
+  if(window.firebaseReady && _fbSyncEnabled){
+    const fbKey = `${activeUserId}_${gid}`;
+    _fbLastSaveTime = Date.now();
+    window.firebaseSave(fbKey, state);
+  }
+
   if(!silent){
     const ind = document.getElementById('save-indicator');
     if(ind){ ind.style.opacity='1'; setTimeout(()=>ind.style.opacity='0', 1200); }
@@ -2038,6 +2415,50 @@ function saveData(silent){
 function autoSave(){
   clearTimeout(_saveTimer);
   _saveTimer = setTimeout(()=>saveData(), 800);
+}
+
+// ── Підключаємо Firebase слухач після завантаження ──
+function startFirebaseSync(){
+  if(!window.firebaseReady || !activeUserId) return;
+  _fbSyncEnabled = true;
+
+  if(_fbUnsubscribe) _fbUnsubscribe();
+  const gid = activeGardenId || 'g_default';
+  const fbKey = `${activeUserId}_${gid}`;
+
+  _fbUnsubscribe = window.firebaseSubscribe(fbKey, (remoteState) => {
+    // Ігноруємо якщо щойно самі зберігали (щоб не перезаписати)
+    if(Date.now() - _fbLastSaveTime < 3000) return;
+
+    // Оновлюємо стан з Firebase
+    state.plants = remoteState.plants || state.plants;
+    state.history = remoteState.history || state.history;
+    state.plans = remoteState.plans || state.plans;
+    state.nextId = remoteState.nextId || state.nextId;
+    state.sortsDb = remoteState.sortsDb || state.sortsDb;
+    if(remoteState.gridCols) gridCols = remoteState.gridCols;
+    if(remoteState.gridRows) gridRows = remoteState.gridRows;
+
+    localStorage.setItem(gardenStorageKey(activeUserId, gid), JSON.stringify(state));
+    renderMap(); renderDashboard(); updateGridUI();
+    toast('🔄 Синхронізовано з Firebase');
+  });
+
+  updateFirebaseSyncUI(true);
+}
+
+function stopFirebaseSync(){
+  if(_fbUnsubscribe){ _fbUnsubscribe(); _fbUnsubscribe = null; }
+  _fbSyncEnabled = false;
+  updateFirebaseSyncUI(false);
+}
+
+function updateFirebaseSyncUI(enabled){
+  const btn = document.getElementById('fb-sync-btn');
+  if(!btn) return;
+  btn.textContent = enabled ? '🔥 Firebase: ON' : '🔥 Firebase: OFF';
+  btn.style.color = enabled ? '#4caf50' : 'var(--muted)';
+  btn.style.borderColor = enabled ? 'rgba(76,175,80,.4)' : 'var(--border)';
 }
 
 // ═══════════════════════════════════════════════════════
@@ -2352,7 +2773,12 @@ function createSVGEl(tag){
 function renderNode(plant){
   const meta = PLANT_META[plant.type]||PLANT_META.other;
   const isBush = plant.isBush || meta.isBush;
-  const r = isBush ? 14 : 20;
+  const isOther = meta.isOther;
+  const isConifer = meta.isConifer;
+  const isForest = meta.isForest;
+  // Дерева (плодові + лісові) — великі, решта — маленькі
+  const isTree = !isBush && !isOther && !isConifer;
+  const r = isTree ? 22 : 13;
   const {x,y} = pct2px(plant.x, plant.y);
 
   const wrap = document.createElement('div');
@@ -2362,7 +2788,7 @@ function renderNode(plant){
 
   const outer=document.createElement('div');
   outer.className='node-outer';
-  outer.style.cssText=`width:${r*2}px;height:${r*2}px;background:${meta.color};color:${meta.ring};border:${isBush?'2px dashed rgba(255,255,255,.3)':'2px solid rgba(255,255,255,.25)'};box-shadow:0 3px 12px rgba(0,0,0,.5);`;
+  outer.style.cssText=`width:${r*2}px;height:${r*2}px;background:${meta.color};color:${meta.ring};border:${isTree?'2px solid rgba(255,255,255,.25)':'2px dashed rgba(255,255,255,.3)'};box-shadow:0 3px 12px rgba(0,0,0,.5);`;
 
   // pulse ring if has events
   const hasEvents = state.history.some(h=>h.plantId===plant.id);
@@ -2375,7 +2801,7 @@ function renderNode(plant){
 
   const emo=document.createElement('div');
   emo.className='node-emoji';
-  emo.style.fontSize=isBush?'.8rem':'1.1rem';
+  emo.style.fontSize=isTree?'1.1rem':'.8rem';
   emo.textContent=meta.emoji;
   outer.appendChild(emo);
 
@@ -2412,7 +2838,7 @@ function renderNode(plant){
   // label
   const lbl=document.createElement('div');
   lbl.className='node-label';
-  lbl.style.fontSize=isBush?'.42rem':'.5rem';
+  lbl.style.fontSize=isTree?'.5rem':'.42rem';
   lbl.textContent = plant.sort ? plant.name+' · '+plant.sort : plant.name;
   wrap.appendChild(lbl);
 
@@ -2673,20 +3099,27 @@ function openDetail(id){
   body.innerHTML='';
 
   // Photo gallery
-  const allPhotos = plant.photos||[];
+  // Підтягуємо фото з бази сортів якщо є
+  const sortData = getSortsForType(plant.type).find(s=>s.sort===plant.sort);
+  const sortPhoto = sortData?.photo || null;
+  const userPhotos = plant.photos||[];
+  const allPhotos = sortPhoto ? [sortPhoto, ...userPhotos] : userPhotos;
+
   if(allPhotos.length || true){ // always show gallery area
     const galleryWrap = document.createElement('div');
     galleryWrap.style.cssText='background:var(--surface2);border-radius:10px;padding:10px;';
 
     const galleryHead = document.createElement('div');
     galleryHead.style.cssText='font-size:.62rem;color:var(--muted);text-transform:uppercase;letter-spacing:.4px;margin-bottom:8px;display:flex;justify-content:space-between;align-items:center;';
-    galleryHead.innerHTML=`<span>Фото (${allPhotos.filter(p=>p).length})</span><label style="cursor:pointer;color:var(--gold);font-size:.68rem;letter-spacing:0;">＋ Додати<input type="file" accept="image/*" multiple onchange="addPhotoToPlant(${plant.id},this)" style="display:none;"></label>`;
+    galleryHead.innerHTML=`<span>Фото (${userPhotos.filter(p=>p).length}${sortPhoto?' +фото сорту':''})</span><label style="cursor:pointer;color:var(--gold);font-size:.68rem;letter-spacing:0;">＋ Додати<input type="file" accept="image/*" multiple onchange="addPhotoToPlant(${plant.id},this)" style="display:none;"></label>`;
     galleryWrap.appendChild(galleryHead);
 
     if(allPhotos.filter(p=>p).length){
       const gallery=document.createElement('div');
       gallery.style.cssText='display:flex;gap:6px;flex-wrap:wrap;';
       allPhotos.filter(p=>p).forEach((src,i)=>{
+        const isUserPhoto = sortPhoto ? i > 0 : true;
+        const userIdx = sortPhoto ? i - 1 : i;
         const box=document.createElement('div');
         box.style.cssText='position:relative;';
         const img=document.createElement('img');
@@ -2700,7 +3133,7 @@ function openDetail(id){
           const del=document.createElement('button');
           del.textContent='✕';
           del.style.cssText='position:absolute;top:-4px;right:-4px;width:16px;height:16px;border-radius:50%;background:#c04040;border:none;color:#fff;font-size:.55rem;cursor:pointer;display:flex;align-items:center;justify-content:center;';
-          del.onclick=()=>{ removePhotoFromPlant(plant.id, i); };
+          del.onclick=()=>{ removePhotoFromPlant(plant.id, userIdx); };
           box.appendChild(del);
         }
         gallery.appendChild(box);
@@ -2896,9 +3329,10 @@ function renderEventsList(evts, container, plantId){
     d.style.borderLeftColor=em.color;
     d.innerHTML=`
       <button class="hist-del" onclick="deleteEvent(${ev.id},event)">✕</button>
-      <div class="hist-date">${formatDate(ev.date)}</div>
+      <div class="hist-date">${formatDate(ev.date)}${authorBadge(ev.author)}</div>
       <div class="hist-type" style="color:${em.color}">${em.icon} ${em.label}</div>
       ${ev.comment?`<div class="hist-comment">${ev.comment}</div>`:''}
+      ${ev.ownerNote?`<div style="margin-top:5px;padding:5px 8px;border-radius:6px;background:rgba(201,168,76,.07);border-left:2px solid var(--gold-dim);font-size:.68rem;color:var(--gold-light);">📌 ${ev.ownerNote}</div>`:''}
       ${ev.photo?`<img src="${ev.photo}" class="hist-img" alt="фото" onclick="viewPhoto('${ev.photo}')">`:''}
     `;
     container.appendChild(d);
@@ -3065,7 +3499,7 @@ function renderHistoryTab(){
     if(item._kind==='plan'){
       d.innerHTML=`
         <button class="hist-del" onclick="deletePlan(${item.id},event)">✕</button>
-        <div class="hist-date" style="color:${daysLeft<=0?'#e07070':'var(--gold-light)'}">${dateLabel}${item.repeat&&item.repeat!=='none'?` <span class="plan-repeat-badge">${repeatL[item.repeat]}</span>`:''}</div>
+        <div class="hist-date" style="color:${daysLeft<=0?'#e07070':'var(--gold-light)'}">${dateLabel}${item.repeat&&item.repeat!=='none'?` <span class="plan-repeat-badge">${repeatL[item.repeat]}</span>`:''}${authorBadge(item.author)}</div>
         <div class="hist-type" style="color:${em.color}">${em.icon} ${em.label}</div>
         ${item.comment?`<div class="hist-comment">${item.comment}</div>`:''}
         <div class="hist-plant">${targetLabel}</div>
@@ -3077,7 +3511,7 @@ function renderHistoryTab(){
     } else {
       d.innerHTML=`
         <button class="hist-del" onclick="deleteEvent(${item.id},event)">✕</button>
-        <div class="hist-date">${dateLabel}</div>
+        <div class="hist-date">${dateLabel}${authorBadge(item.author)}</div>
         <div class="hist-type" style="color:${em.color}">${em.icon} ${em.label}</div>
         ${item.comment?`<div class="hist-comment">${item.comment}</div>`:''}
         <div class="hist-plant">${targetLabel}</div>
@@ -3234,24 +3668,51 @@ function renderSortsModal(){
   const types = typeFilter ? [typeFilter]
     : ['apple','pear','cherry','vishnya','plum','apricot','peach','currant','redcurrant','blueberry',
        'pine','spruce','fir','cedar','thuja','juniper','oak','birch','maple','linden','chestnut','acacia'];
-  types.forEach(type=>{
+
+  // Також показуємо кастомні види з sortsDb
+  const customTypes = Object.keys(state.sortsDb||{}).filter(t=>!types.includes(t));
+  const allTypes = [...types, ...customTypes];
+
+  allTypes.forEach(type=>{
     const sorts = getSortsForType(type);
     if(!sorts.length) return;
     const usedSorts = new Set(state.plants.filter(p=>p.type===type&&p.sort).map(p=>p.sort));
     const meta = PLANT_META[type]||PLANT_META.other;
     const sec = document.createElement('div');
     sec.style.cssText='margin-bottom:14px;';
-    sec.innerHTML=`<div style="font-size:.62rem;font-weight:700;letter-spacing:.8px;text-transform:uppercase;color:var(--muted);padding:4px 0 6px;">${meta.emoji} ${meta.label} <span style="color:#3a5a3a;font-weight:400;">(${sorts.length})</span></div>`;
+
+    // Заголовок секції + кнопка додати сорт до цього виду
+    const head = document.createElement('div');
+    head.style.cssText='display:flex;align-items:center;justify-content:space-between;padding:4px 0 6px;';
+    head.innerHTML=`
+      <span style="font-size:.62rem;font-weight:700;letter-spacing:.8px;text-transform:uppercase;color:var(--muted);">${meta.emoji} ${meta.label} <span style="color:#3a5a3a;font-weight:400;">(${sorts.length})</span></span>
+      <button onclick="openAddSortForType('${type}')" style="font-size:.6rem;padding:2px 8px;border-radius:10px;background:rgba(201,168,76,.1);border:1px solid rgba(201,168,76,.25);color:var(--gold);cursor:pointer;font-family:'DM Sans',sans-serif;">＋ сорт</button>
+    `;
+    sec.appendChild(head);
+
     sorts.forEach(s=>{
       const inGarden = usedSorts.has(s.sort);
+      const isCustom = (state.sortsDb?.[type]||[]).find(c=>c.sort===s.sort);
       const card = document.createElement('div');
-      card.style.cssText=`background:var(--surface2);border-radius:8px;padding:10px 12px;margin-bottom:5px;border-left:3px solid ${inGarden?'var(--gold)':'rgba(255,255,255,.08)'};`;
+      card.style.cssText=`background:var(--surface2);border-radius:8px;padding:10px 12px;margin-bottom:5px;border-left:3px solid ${inGarden?'var(--gold)':'rgba(255,255,255,.08)'};position:relative;`;
       card.innerHTML=`
-        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:${s.desc?'4px':'0'};">
+        <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:8px;margin-bottom:${s.desc?'4px':'0'};">
           <span style="font-size:.8rem;font-weight:700;color:var(--cream);">${s.sort}</span>
-          ${inGarden?`<span style="font-size:.55rem;background:rgba(201,168,76,.15);color:var(--gold);border:1px solid rgba(201,168,76,.25);border-radius:10px;padding:1px 6px;">У саду</span>`:''}
+          <div style="display:flex;align-items:center;gap:5px;flex-shrink:0;">
+            ${inGarden?`<span style="font-size:.55rem;background:rgba(201,168,76,.15);color:var(--gold);border:1px solid rgba(201,168,76,.25);border-radius:10px;padding:1px 6px;">У саду</span>`:''}
+            <button onclick="editSort('${type}','${s.sort.replace(/'/g,"\\'")}',${isCustom?'true':'false'})" style="font-size:.75rem;padding:5px 10px;border-radius:7px;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.12);color:var(--cream);cursor:pointer;line-height:1;">🪶 Ред.</button>
+            <button onclick="deleteSort('${type}','${s.sort.replace(/'/g,"\\'")}','${isCustom?'true':'false'}')" style="font-size:.75rem;padding:5px 10px;border-radius:7px;background:rgba(192,64,64,.1);border:1px solid rgba(192,64,64,.25);color:#e07070;cursor:pointer;line-height:1;">✕</button>
+          </div>
         </div>
-        ${s.desc?`<div style="font-size:.7rem;color:#9ab890;line-height:1.55;">${s.desc}</div>`:''}
+        ${s.desc?`<div style="font-size:.7rem;color:#9ab890;line-height:1.55;white-space:pre-line;margin-bottom:6px;">${s.desc}</div>`:''}
+        ${s.ownerNote?`<div style="font-size:.68rem;color:var(--gold);background:rgba(201,168,76,.07);border-left:2px solid var(--gold-dim);padding:5px 8px;border-radius:0 6px 6px 0;line-height:1.5;margin-bottom:4px;white-space:pre-line;">📝 ${s.ownerNote}</div>`:''}
+        <div id="note-wrap-${type}-${s.sort.replace(/\W/g,'_')}" style="margin-top:4px;">
+          <button onclick="toggleOwnerNote('${type}','${s.sort.replace(/'/g,"\\'")}',this)" style="font-size:.6rem;padding:2px 8px;border-radius:8px;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.08);color:var(--muted);cursor:pointer;">📝 ${s.ownerNote?'змінити примітку':'+ моя примітка'}</button>
+          <div class="note-editor" style="display:none;margin-top:5px;">
+            <textarea placeholder="Моя примітка до цього сорту..." style="width:100%;min-height:55px;font-size:.7rem;line-height:1.5;resize:vertical;">${s.ownerNote||''}</textarea>
+            <button onclick="saveOwnerNote('${type}','${s.sort.replace(/'/g,"\\'")}',this)" style="margin-top:4px;padding:4px 12px;border-radius:6px;background:var(--gold);color:#0a140a;border:none;font-size:.65rem;font-weight:700;cursor:pointer;font-family:'DM Sans',sans-serif;">Зберегти</button>
+          </div>
+        </div>
       `;
       sec.appendChild(card);
     });
@@ -3402,6 +3863,7 @@ function openAddEvent(plantId){
   document.getElementById('ev-photo-preview').style.display = 'none';
   document.getElementById('ev-photo-preview').src = '';
   document.getElementById('ev-comment').value = '';
+  document.getElementById('ev-owner-note').value = '';
   document.getElementById('ev-date').value = new Date().toISOString().slice(0,10);
   document.getElementById('ev-repeat').value = 'none';
 
@@ -3462,32 +3924,52 @@ function saveUnifiedEvent(){
   const plantId= rawId==='garden' ? 'garden' : +rawId;
   const date   = document.getElementById('ev-date').value || new Date().toISOString().slice(0,10);
   const comment= document.getElementById('ev-comment').value.trim();
+  const ownerNote = document.getElementById('ev-owner-note').value.trim();
   const type   = selectedEventType;
   const today  = new Date().toISOString().slice(0,10);
 
   if(!plantId){ toast('⚠️ Оберіть рослину або садочок'); return; }
 
   if(evMode === 'planned' || date > today){
-    // Save as plan
     const repeat = document.getElementById('ev-repeat').value;
     if(editingPlanId){
       const plan = state.plans.find(p=>p.id===editingPlanId);
-      if(plan) Object.assign(plan,{plantId, type, date, repeat, comment, scope:plantId==='garden'?'garden':'plant'});
+      if(plan) Object.assign(plan,{plantId, type, date, repeat, comment, ownerNote, scope:plantId==='garden'?'garden':'plant'});
       editingPlanId = null;
       toast('✅ План оновлено');
     } else {
-      state.plans.push({ id:Date.now(), plantId, type, date, repeat, comment, scope:plantId==='garden'?'garden':'plant', done:false });
+      state.plans.push({ id:Date.now(), plantId, type, date, repeat, comment, ownerNote, scope:plantId==='garden'?'garden':'plant', done:false, author: getActiveUser() ? {id:activeUserId, name:getActiveUser().name, avatar:getActiveUser().avatar, role:getActiveUser().role} : null });
       toast('📅 Заплановано!');
     }
     closeModal('eventModal');
     autoSave(); renderSidebar(); renderDashboard();
+    // Push notification
+    if(window.sendPushNotification){
+      const user = getActiveUser();
+      const em = EVENT_META[type];
+      window.sendPushNotification(
+        `${em?.icon||'📅'} ${em?.label||'Подія'} заплановано`,
+        `${user?.name||'Хтось'} додав план на ${date}${comment?' — '+comment.slice(0,50):''}`,
+        user?.name||''
+      );
+    }
   } else {
-    // Save as history event
-    state.history.push({ id:Date.now(), plantId, date, type, comment, photo:evPhotoBase64||null });
+    state.history.push({ id:Date.now(), plantId, date, type, comment, ownerNote, photo:evPhotoBase64||null, author: getActiveUser() ? {id:activeUserId, name:getActiveUser().name, avatar:getActiveUser().avatar, role:getActiveUser().role} : null });
     closeModal('eventModal');
     autoSave(); renderSidebar(); renderMap();
     if(selectedId && selectedId===plantId) openDetail(plantId);
     toast(`${EVENT_META[type]?.icon||'✅'} Подію збережено!`);
+    // Push notification
+    if(window.sendPushNotification){
+      const user = getActiveUser();
+      const em = EVENT_META[type];
+      const plant = state.plants.find(p=>p.id===plantId);
+      window.sendPushNotification(
+        `${em?.icon||'🌿'} ${em?.label||'Подія'} виконано`,
+        `${user?.name||'Хтось'}${plant?' — '+plant.name:''}${comment?' — '+comment.slice(0,50):''}`,
+        user?.name||''
+      );
+    }
   }
 }
 
@@ -3508,7 +3990,7 @@ function completePlan(id, e){
   e && e.stopPropagation();
   const plan = state.plans.find(p=>p.id===id);
   if(!plan) return;
-  state.history.push({ id:Date.now(), plantId:plan.plantId, type:plan.type, date:new Date().toISOString().slice(0,10), comment:(plan.comment?plan.comment+'\n':'')+'(виконано з плану)', photo:null });
+  state.history.push({ id:Date.now(), plantId:plan.plantId, type:plan.type, date:new Date().toISOString().slice(0,10), comment:(plan.comment?plan.comment+'\n':'')+'(виконано з плану)', photo:null, author: getActiveUser() ? {id:activeUserId, name:getActiveUser().name, avatar:getActiveUser().avatar, role:getActiveUser().role} : null });
   if(plan.repeat && plan.repeat!=='none'){
     const nextDate = calcNextDate(plan.date, plan.repeat);
     plan.date = nextDate;
@@ -3672,6 +4154,112 @@ function openAddPlant(){
   renderPlPhotosPrev();
   populateSortSelect('apple', '');
   openModal('plantModal');
+}
+
+function openEditProfileModal(){
+  const user = getActiveUser();
+  if(!user) return;
+
+  document.getElementById('ep-name').value = user.name || '';
+  document.getElementById('ep-avatar-val').value = user.avatar || '👤';
+  document.getElementById('ep-avatar-photo').value = user.avatarPhoto || '';
+  document.getElementById('ep-role-val').value = user.role || '';
+
+  const disp = document.getElementById('ep-avatar-display');
+  if(user.avatarPhoto){
+    disp.innerHTML = `<img src="${user.avatarPhoto}" style="width:100%;height:100%;object-fit:cover;border-radius:50%;">`;
+  } else {
+    disp.innerHTML = user.avatar || '👤';
+  }
+
+  const predefined = ['Тато','Мама','Дитина'];
+  document.querySelectorAll('.ep-role-btn').forEach(b=>{
+    b.classList.toggle('active', b.dataset.role === user.role);
+  });
+  const isCustom = user.role && !predefined.includes(user.role);
+  const customInput = document.getElementById('ep-role-custom');
+  if(isCustom){
+    customInput.style.display = 'block';
+    customInput.value = user.role;
+    document.querySelector('.ep-role-btn[data-role=""]')?.classList.add('active');
+  } else {
+    customInput.style.display = 'none';
+  }
+
+  openModal('editProfileModal');
+}
+
+function selectEditRole(btn){
+  document.querySelectorAll('.ep-role-btn').forEach(b=>b.classList.remove('active'));
+  btn.classList.add('active');
+  const role = btn.dataset.role;
+  const customInput = document.getElementById('ep-role-custom');
+  if(role === ''){
+    customInput.style.display = 'block';
+    customInput.focus();
+    document.getElementById('ep-role-val').value = '';
+  } else {
+    customInput.style.display = 'none';
+    document.getElementById('ep-role-val').value = role;
+  }
+}
+
+function loadEditAvatarPhoto(input){
+  const file = input.files[0];
+  if(!file) return;
+  if(file.size > 3*1024*1024){ toast('⚠️ Фото занадто велике (макс. 3МБ)'); return; }
+  const reader = new FileReader();
+  reader.onload = e => {
+    const src = e.target.result;
+    document.getElementById('ep-avatar-photo').value = src;
+    document.getElementById('ep-avatar-val').value = '📷';
+    document.getElementById('ep-avatar-display').innerHTML = `<img src="${src}" style="width:100%;height:100%;object-fit:cover;border-radius:50%;">`;
+  };
+  reader.readAsDataURL(file);
+}
+
+function toggleEditAvatarPicker(){
+  const picker = document.getElementById('ep-avatar-picker');
+  if(picker.style.display === 'none' || !picker.style.display){
+    picker.style.display = 'flex';
+    if(!picker.children.length){
+      ['👤','👨','👩','👦','👧','👴','👵','🧑','👨‍🌾','👩‍🌾','🧑‍🌾','😊','🌿','🌱','🍀'].forEach(a=>{
+        const btn = document.createElement('button');
+        btn.textContent = a;
+        btn.style.cssText = 'font-size:1.4rem;background:none;border:1px solid var(--border);border-radius:6px;width:34px;height:34px;cursor:pointer;';
+        btn.onclick = ()=>{
+          document.getElementById('ep-avatar-val').value = a;
+          document.getElementById('ep-avatar-photo').value = '';
+          document.getElementById('ep-avatar-display').innerHTML = a;
+          picker.style.display = 'none';
+        };
+        picker.appendChild(btn);
+      });
+    }
+  } else {
+    picker.style.display = 'none';
+  }
+}
+
+function saveEditProfile(){
+  const users = getUsers();
+  const idx = users.findIndex(u=>u.id===activeUserId);
+  if(idx < 0) return;
+
+  const name = document.getElementById('ep-name').value.trim();
+  if(!name){ toast('⚠️ Введіть ім\'я'); return; }
+
+  const roleVal = document.getElementById('ep-role-val').value;
+  const roleCustom = document.getElementById('ep-role-custom').value.trim();
+  const role = roleVal || roleCustom;
+  const avatar = document.getElementById('ep-avatar-val').value;
+  const avatarPhoto = document.getElementById('ep-avatar-photo').value;
+
+  users[idx] = { ...users[idx], name, role, avatar, avatarPhoto };
+  saveUsers(users);
+  closeModal('editProfileModal');
+  updateUserUI();
+  toast('✅ Профіль оновлено');
 }
 
 function openEditPlant(){
@@ -4186,9 +4774,9 @@ function initDraggableGrid(){
 
   function getPos(e){ return e.touches ? e.touches[0] : e; }
 
-  el.addEventListener('pointerdown', startDrag);
+  el.addEventListener('pointerdown', onGridPointerDown);
 
-  function startDrag(e){
+  function onGridPointerDown(e){
     if(e.target.tagName === 'BUTTON' || e.target.tagName === 'SPAN') return;
     e.preventDefault();
     dragging = true;
@@ -4216,6 +4804,366 @@ function initDraggableGrid(){
     el.style.cursor = 'grab';
   });
 }
+
+// ═══════════════════════════════════════════════════════
+//  CLAUDE AI — генерація інфо про рослини
+// ═══════════════════════════════════════════════════════
+const CLAUDE_KEY = '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';
+let apiResultData = null;
+
+function getPlantQuery(){
+  const type = document.getElementById('pl-type').value;
+  const sortSel = document.getElementById('pl-sort-select').value;
+  const sortCustom = document.getElementById('pl-sort-custom').value.trim();
+  const sort = sortCustom || sortSel;
+  const typeOpt = document.querySelector(`#pl-type option[value="${type}"]`);
+  const typeName = typeOpt ? typeOpt.textContent.replace(/^.{2}/,'').trim() : type;
+  return sort ? `${typeName} сорт ${sort}` : typeName;
+}
+
+async function lookupPlantInfo(){
+  const query = getPlantQuery();
+  if(!query){ toast('⚠️ Оберіть вид або введіть сорт'); return; }
+
+  const btn = document.getElementById('api-lookup-btn');
+  const block = document.getElementById('api-result-block');
+  btn.textContent = '⏳ Генерую...';
+  btn.disabled = true;
+  block.style.display = 'none';
+  apiResultData = null;
+
+  try {
+    const prompt = `Ти експерт-садівник. Надай інформацію про рослину: ${query}.
+
+Відповідай ЛИШЕ у форматі JSON (без markdown):
+{
+  "name": "повна назва українською",
+  "desc": "опис сорту 2-3 речення: плоди/квіти, смак/аромат, терміни, особливості",
+  "care": "💧 Полив: ...\n☀️ Освітлення: ...\n✂️ Обрізка: ...\n❄️ Морозостійкість: ...\n🌱 Підживлення: ..."
+}
+
+Все українською мовою. Коротко і практично для садівника.`;
+
+    const res = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': CLAUDE_KEY,
+        'anthropic-version': '2023-06-01',
+        'anthropic-dangerous-direct-browser-access': 'true',
+      },
+      body: JSON.stringify({
+        model: 'claude-haiku-4-5-20251001',
+        max_tokens: 600,
+        messages: [{ role: 'user', content: prompt }]
+      })
+    });
+
+    const data = await res.json();
+    if(!data.content?.[0]?.text) throw new Error('Порожня відповідь');
+
+    const text = data.content[0].text.replace(/```json|```/g,'').trim();
+    const parsed = JSON.parse(text);
+
+    apiResultData = {
+      name: parsed.name || query,
+      desc: parsed.desc || '',
+      care: parsed.care || '',
+    };
+
+    document.getElementById('api-result-name').textContent = apiResultData.name;
+    document.getElementById('api-result-desc').textContent = apiResultData.desc;
+
+    const careEl = document.getElementById('api-result-care');
+    if(apiResultData.care){
+      careEl.textContent = apiResultData.care;
+      careEl.style.display = 'block';
+    } else {
+      careEl.style.display = 'none';
+    }
+
+    document.getElementById('api-result-img').style.display = 'none';
+    block.style.display = 'flex';
+    block.style.flexDirection = 'column';
+
+  } catch(e) {
+    console.error(e);
+    toast('⚠️ Помилка — перевір інтернет або спробуй ще раз');
+  }
+
+  btn.textContent = '🔍 Знайти інфо про сорт';
+  btn.disabled = false;
+}
+
+function applyApiResult(){
+  if(!apiResultData) return;
+  if(apiResultData.desc){
+    const descEl = document.getElementById('pl-desc');
+    if(!descEl.value) descEl.value = apiResultData.desc;
+  }
+  if(apiResultData.care){
+    const noteEl = document.getElementById('pl-note');
+    if(!noteEl.value) noteEl.value = apiResultData.care;
+  }
+  document.getElementById('api-result-block').style.display = 'none';
+  toast('✅ Інфо вставлено в картку');
+}
+
+function onNewSortTypeChange(){
+  const type = document.getElementById('new-sort-type').value;
+  const customInput = document.getElementById('new-sort-type-custom');
+  customInput.style.display = type === 'other' ? 'block' : 'none';
+}
+
+function toggleOwnerNote(type, sortName, btn){
+  const editor = btn.nextElementSibling;
+  const isOpen = editor.style.display !== 'none';
+  editor.style.display = isOpen ? 'none' : 'block';
+  if(!isOpen) editor.querySelector('textarea').focus();
+}
+
+function saveOwnerNote(type, sortName, btn){
+  const textarea = btn.previousElementSibling;
+  const note = textarea.value.trim();
+
+  if(!state.sortsDb) state.sortsDb = {};
+  if(!state.sortsDb[type]) state.sortsDb[type] = [];
+
+  // Шукаємо в кастомній базі
+  const idx = state.sortsDb[type].findIndex(s=>s.sort===sortName);
+  if(idx >= 0){
+    state.sortsDb[type][idx].ownerNote = note;
+  } else {
+    // Сорт із вбудованої бази — додаємо override тільки з приміткою
+    const builtin = (SORTS_DB_BUILTIN[type]||[]).find(s=>s.sort===sortName);
+    state.sortsDb[type].push({ sort: sortName, desc: builtin?.desc||'', ownerNote: note });
+  }
+
+  autoSave();
+  renderSortsModal();
+  toast('✅ Примітку збережено');
+}
+
+function openAddSortForType(type){
+  // Відкриваємо модал і одразу встановлюємо потрібний вид
+  openAddSortModal();
+  const sel = document.getElementById('new-sort-type');
+  if(sel.querySelector(`option[value="${type}"]`)){
+    sel.value = type;
+  } else {
+    sel.value = 'other';
+    document.getElementById('new-sort-type-custom').style.display = 'block';
+    document.getElementById('new-sort-type-custom').value = PLANT_META[type]?.label || type;
+  }
+}
+
+function editSort(type, sortName, isCustom){
+  // Знаходимо сорт
+  const allSorts = getSortsForType(type);
+  const s = allSorts.find(x=>x.sort===sortName);
+  if(!s) return;
+
+  // Відкриваємо модал редагування
+  openAddSortForType(type);
+  document.getElementById('new-sort-name').value = sortName;
+  document.getElementById('new-sort-desc').value = s.desc || '';
+  document.getElementById('new-sort-desc-wrap').style.display = 'block';
+  document.getElementById('gen-sort-btn').textContent = '🔄 Оновити опис через AI';
+
+  // Змінюємо кнопку збереження на оновлення
+  const saveBtn = document.querySelector('#addSortModal .btn-primary');
+  saveBtn.textContent = 'Оновити сорт';
+  saveBtn.onclick = ()=>updateSort(type, sortName, isCustom);
+}
+
+function updateSort(type, oldSortName, isCustom){
+  const name = document.getElementById('new-sort-name').value.trim();
+  const desc = document.getElementById('new-sort-desc').value.trim();
+  if(!name){ toast('⚠️ Введіть назву сорту'); return; }
+
+  if(!state.sortsDb) state.sortsDb = {};
+
+  if(isCustom){
+    // Оновлюємо в кастомній базі
+    if(!state.sortsDb[type]) state.sortsDb[type] = [];
+    const idx = state.sortsDb[type].findIndex(s=>s.sort===oldSortName);
+    if(idx>=0) state.sortsDb[type][idx] = { sort: name, desc };
+    else state.sortsDb[type].push({ sort: name, desc });
+  } else {
+    // Вбудований сорт — зберігаємо оновлення в sortsDb як override
+    if(!state.sortsDb[type]) state.sortsDb[type] = [];
+    // Шукаємо чи вже є override
+    const idx = state.sortsDb[type].findIndex(s=>s.sort===oldSortName);
+    if(idx>=0) state.sortsDb[type][idx] = { sort: name, desc };
+    else state.sortsDb[type].push({ sort: name, desc });
+  }
+
+  autoSave();
+  closeModal('addSortModal');
+  renderSortsModal();
+  toast(`✅ Сорт "${name}" оновлено`);
+
+  // Відновлюємо кнопку
+  setTimeout(()=>{
+    const saveBtn = document.querySelector('#addSortModal .btn-primary');
+    if(saveBtn){ saveBtn.textContent = 'Зберегти сорт'; saveBtn.onclick = saveNewSort; }
+  }, 300);
+}
+
+function deleteSort(type, sortName, isCustomStr){
+  const isCustom = isCustomStr === 'true';
+  if(!state.sortsDb) state.sortsDb = {};
+
+  if(isCustom){
+    // Видаляємо з кастомної бази
+    if(state.sortsDb[type]){
+      state.sortsDb[type] = state.sortsDb[type].filter(s=>s.sort!==sortName);
+    }
+  } else {
+    // Вбудований сорт — додаємо в чорний список
+    if(!state.sortsDb._blacklist) state.sortsDb._blacklist = {};
+    if(!state.sortsDb._blacklist[type]) state.sortsDb._blacklist[type] = [];
+    if(!state.sortsDb._blacklist[type].includes(sortName)){
+      state.sortsDb._blacklist[type].push(sortName);
+    }
+  }
+
+  autoSave();
+  renderSortsModal();
+  toast(`🗑️ Сорт "${sortName}" видалено`);
+}
+
+function openAddSortModal(){
+  document.getElementById('new-sort-name').value = '';
+  document.getElementById('new-sort-desc').value = '';
+  document.getElementById('new-sort-desc-wrap').style.display = 'none';
+  document.getElementById('new-sort-type-custom').style.display = 'none';
+  document.getElementById('new-sort-type-custom').value = '';
+  document.getElementById('gen-sort-btn').textContent = '🤖 Згенерувати опис через AI';
+  document.getElementById('gen-sort-btn').disabled = false;
+  // Sync type filter
+  const filterVal = document.getElementById('sorts-filter-type')?.value;
+  if(filterVal) document.getElementById('new-sort-type').value = filterVal;
+  openModal('addSortModal');
+}
+
+async function generateSortDesc(){
+  const typeVal = document.getElementById('new-sort-type').value;
+  const typeCustom = document.getElementById('new-sort-type-custom').value.trim();
+  const name = document.getElementById('new-sort-name').value.trim();
+
+  if(typeVal === 'other' && !typeCustom){ toast('⚠️ Вкажіть назву виду'); return; }
+  if(!name){ toast('⚠️ Введіть назву сорту'); return; }
+
+  const typeOpt = document.querySelector(`#new-sort-type option[value="${typeVal}"]`);
+  const typeName = typeVal === 'other' ? typeCustom : (typeOpt ? typeOpt.textContent.replace(/^.{2}/,'').trim() : typeVal);
+
+  const btn = document.getElementById('gen-sort-btn');
+  btn.textContent = '⏳ Перевіряю...';
+  btn.disabled = true;
+
+  try {
+    const prompt = `Ти експерт-садівник. Тебе просять додати сорт "${name}" (${typeName}) до бази даних саду.
+
+СПОЧАТКУ перевір: чи існує такий сорт насправді? Чи це реальний відомий сорт ${typeName}?
+
+Відповідай ЛИШЕ у форматі JSON без markdown:
+
+Якщо сорт ІСНУЄ і ти його знаєш:
+{"exists": true, "desc": "2-3 речення про сорт: плоди/ягоди, смак, терміни дозрівання, особливості.\n💧 Полив: ...\n✂️ Обрізка: ...\n🌱 Підживлення: ...\n🛡️ Хвороби: ..."}
+
+Якщо сорт НЕ ІСНУЄ або ти не впевнений:
+{"exists": false, "reason": "коротке пояснення чому"}
+
+Все українською мовою.`;
+
+    const res = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': CLAUDE_KEY,
+        'anthropic-version': '2023-06-01',
+        'anthropic-dangerous-direct-browser-access': 'true',
+      },
+      body: JSON.stringify({
+        model: 'claude-haiku-4-5-20251001',
+        max_tokens: 500,
+        messages: [{ role: 'user', content: prompt }]
+      })
+    });
+
+    const data = await res.json();
+    const text = data.content[0].text.replace(/```json|```/g,'').trim();
+    const parsed = JSON.parse(text);
+
+    if(!parsed.exists){
+      toast(`⚠️ ${parsed.reason || 'Сорт не знайдено в базі знань'}`);
+      // Даємо можливість додати вручну
+      document.getElementById('new-sort-desc-wrap').style.display = 'block';
+      document.getElementById('new-sort-desc').value = '';
+      document.getElementById('new-sort-desc').placeholder = 'Сорт не розпізнано AI — введіть опис вручну якщо впевнені що він існує';
+      btn.textContent = '🔄 Спробувати знову';
+    } else {
+      document.getElementById('new-sort-desc').value = parsed.desc || '';
+      document.getElementById('new-sort-desc-wrap').style.display = 'block';
+      btn.textContent = '🔄 Згенерувати знову';
+    }
+
+  } catch(e) {
+    toast('⚠️ Помилка AI — введіть опис вручну');
+    document.getElementById('new-sort-desc-wrap').style.display = 'block';
+  }
+
+  btn.disabled = false;
+}
+
+function saveNewSort(){
+  const typeVal = document.getElementById('new-sort-type').value;
+  const typeCustom = document.getElementById('new-sort-type-custom').value.trim();
+  const name = document.getElementById('new-sort-name').value.trim();
+  const desc = document.getElementById('new-sort-desc').value.trim();
+
+  if(typeVal === 'other' && !typeCustom){ toast('⚠️ Вкажіть назву виду'); return; }
+  if(!name){ toast('⚠️ Введіть назву сорту'); return; }
+
+  // Для кастомного виду — зберігаємо під ключем на основі назви
+  const type = typeVal === 'other'
+    ? typeCustom.toLowerCase().replace(/\s+/g, '_')
+    : typeVal;
+
+  // Якщо це новий вид — додаємо його в PLANT_META як "інше"
+  if(typeVal === 'other' && !PLANT_META[type]){
+    PLANT_META[type] = { emoji: '🌿', label: typeCustom, type: 'other' };
+  }
+
+  if(!state.sortsDb) state.sortsDb = {};
+  if(!state.sortsDb[type]) state.sortsDb[type] = [];
+
+  const exists = getSortsForType(type).find(s => s.sort.toLowerCase() === name.toLowerCase());
+  if(exists){ toast('⚠️ Такий сорт вже є в базі'); return; }
+
+  state.sortsDb[type].push({ sort: name, desc });
+  autoSave();
+  closeModal('addSortModal');
+  renderSortsModal();
+  toast(`✅ Сорт "${name}" додано до каталогу`);
+}
+
+function toggleFirebaseSync(){
+  // Firebase завжди увімкнений
+}
+
+// Автозапуск Firebase коли готовий
+window.addEventListener('firebase-ready', ()=>{
+  if(activeUserId) startFirebaseSync();
+});
+
+// Зберігаємо FCM токен коли він готовий
+window.addEventListener('fcm-token-ready', (e)=>{
+  if(activeUserId && window.saveFcmToken){
+    window.saveFcmToken(activeUserId, e.detail);
+  }
+});
 
 // Plan filter: no longer a select, calendar handles it
 
