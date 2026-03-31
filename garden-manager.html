@@ -104,6 +104,10 @@
   };
 
   // ── Ініціалізація FCM ──
+  window._firebaseMessaging = getMessaging(app);
+  window._firebaseVapid = VAPID_KEY;
+  window._firebaseGetToken = getToken;
+
   async function initFCM(){
     try {
       const messaging = getMessaging(app);
@@ -5207,36 +5211,33 @@ async function enablePushNotifications(){
     }
     const permission = await Notification.requestPermission();
     if(permission !== 'granted'){
-      toast('❌ Сповіщення відхилено в налаштуваннях');
+      toast('❌ Дозвольте сповіщення в налаштуваннях');
       return;
     }
 
-    // Отримуємо токен безпосередньо через Firebase
-    if(window._firebaseMessaging && window._firebaseVapid){
-      try {
-        const swReg = await navigator.serviceWorker.ready;
-        const { getToken } = await import('https://www.gstatic.com/firebasejs/10.12.0/firebase-messaging.js');
-        const token = await getToken(window._firebaseMessaging, {
-          vapidKey: window._firebaseVapid,
-          serviceWorkerRegistration: swReg
-        });
-        if(token && activeUserId && window.saveFcmToken){
-          await window.saveFcmToken(activeUserId, token);
-          window._fcmToken = token;
-          console.log('[FCM] Token saved:', token.slice(0,20)+'...');
-        }
-      } catch(e) {
-        console.warn('[FCM] Token error:', e);
-      }
-    } else if(window._fcmToken && activeUserId && window.saveFcmToken){
-      await window.saveFcmToken(activeUserId, window._fcmToken);
+    let token = window._fcmToken;
+
+    // Якщо токена немає — отримуємо зараз
+    if(!token && window._firebaseMessaging && window._firebaseGetToken){
+      const swReg = await navigator.serviceWorker.ready;
+      token = await window._firebaseGetToken(window._firebaseMessaging, {
+        vapidKey: window._firebaseVapid,
+        serviceWorkerRegistration: swReg
+      });
+      if(token) window._fcmToken = token;
     }
 
-    toast('🔔 Сповіщення увімкнено!');
-    if(btn){ btn.textContent='🔔 Сповіщення: ON'; btn.style.color='#4caf50'; btn.style.borderColor='rgba(76,175,80,.4)'; btn.onclick=disablePushNotifications; }
+    if(token && activeUserId && window.saveFcmToken){
+      await window.saveFcmToken(activeUserId, token);
+      console.log('[FCM] Token saved for', activeUserId, token.slice(0,20)+'...');
+      toast('🔔 Сповіщення увімкнено!');
+      if(btn){ btn.textContent='🔔 Сповіщення: ON'; btn.style.color='#4caf50'; btn.style.borderColor='rgba(76,175,80,.4)'; btn.onclick=disablePushNotifications; }
+    } else {
+      toast('⚠️ Не вдалось отримати токен. Спробуйте як PWA');
+    }
   } catch(e) {
     console.warn('[Push] Error:', e);
-    toast('⚠️ Відкрийте як PWA для сповіщень');
+    toast('⚠️ Помилка: ' + e.message);
   }
 }
 
