@@ -2468,6 +2468,7 @@ let _saveTimer = null;
 let _fbUnsubscribe = null;
 let _fbSyncEnabled = false;
 let _fbLastSaveTime = 0;
+let _fbLastSaveId = '';
 
 function saveData(silent){
   if(!activeUserId) return;
@@ -2482,7 +2483,8 @@ function saveData(silent){
   if(window.firebaseReady && _fbSyncEnabled){
     const fbKey = `shared_${gid}`;
     _fbLastSaveTime = Date.now();
-    window.firebaseSave(fbKey, state);
+    _fbLastSaveId = activeUserId + '_' + _fbLastSaveTime;
+    window.firebaseSave(fbKey, {...state, _saveId: _fbLastSaveId});
   }
 
   if(!silent){
@@ -2509,11 +2511,13 @@ function startFirebaseSync(){
   console.log('[Firebase] Subscribing to:', fbKey);
 
   _fbUnsubscribe = window.firebaseSubscribe(fbKey, (remoteState) => {
-    console.log('[Firebase] Got update, lastSave:', Date.now() - _fbLastSaveTime, 'ms ago');
-    // Ігноруємо якщо щойно самі зберігали (щоб не перезаписати)
-    if(Date.now() - _fbLastSaveTime < 3000) return;
+    // Ігноруємо тільки якщо це наше власне збереження (по унікальному ID)
+    if(remoteState._saveId && remoteState._saveId === _fbLastSaveId) {
+      console.log('[Firebase] Skipping own update');
+      return;
+    }
+    console.log('[Firebase] Got update from another device, applying...');
 
-    // Оновлюємо стан з Firebase
     state.plants = remoteState.plants || state.plants;
     state.history = remoteState.history || state.history;
     state.plans = remoteState.plans || state.plans;
@@ -2523,8 +2527,8 @@ function startFirebaseSync(){
     if(remoteState.gridRows) gridRows = remoteState.gridRows;
 
     localStorage.setItem(gardenStorageKey(activeUserId, gid), JSON.stringify(state));
-    renderMap(); renderDashboard(); updateGridUI();
-    toast('🔄 Синхронізовано з Firebase');
+    renderMap(); renderDashboard(); updateGridUI(); updateJournalBadge();
+    toast('🔄 Синхронізовано');
   });
 
   updateFirebaseSyncUI(true);
