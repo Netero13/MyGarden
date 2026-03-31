@@ -926,7 +926,7 @@ select option{background:#111d11;}
 <div id="drawer">
   <div id="drawer-head">
     <div id="drawer-title" style="font-family:'Cormorant Garamond',serif;font-size:1.1rem;font-weight:700;color:var(--gold-light);"></div>
-    <button onclick="closeDrawer()" style="background:none;border:none;color:var(--muted);cursor:pointer;font-size:1.1rem;padding:4px 8px;transition:color .2s;" onmouseover="this.style.color='var(--cream)'" onmouseout="this.style.color='var(--muted)'">✕</button>
+    <button class="modal-close" onclick="closeDrawer()">✕</button>
   </div>
   <div id="drawer-body"></div>
 </div>
@@ -3396,6 +3396,7 @@ function renderSortsTab(){ renderSortsModal(); }
 function renderSidebar(){
   if(drawerMode==='history') renderHistoryTab();
   renderDashboard();
+  updateJournalBadge();
 }
 
 function renderPlantsTab(){
@@ -3456,10 +3457,48 @@ function renderPlantsTab(){
 }
 
 let histTypeFilter = '';
+let histStatusFilter = 'planned';
+let _readIds = new Set(JSON.parse(localStorage.getItem('readIds')||'[]'));
+
+function markAllRead(){
+  const today = new Date().toISOString().slice(0,10);
+  (state.plans||[]).filter(p=>!p.done && calcNextOccurrence(p) <= today).forEach(p=>_readIds.add('p'+p.id));
+  localStorage.setItem('readIds', JSON.stringify([..._readIds]));
+  updateJournalBadge();
+}
+
+function getUnreadCount(){
+  const today = new Date().toISOString().slice(0,10);
+  return (state.plans||[]).filter(p=>!p.done && calcNextOccurrence(p) <= today && !_readIds.has('p'+p.id)).length;
+}
+
+function updateJournalBadge(){
+  const btn = document.querySelector('[onclick="openDrawer(\'history\')"]');
+  if(!btn) return;
+  const count = getUnreadCount();
+  const existing = btn.querySelector('.journal-badge');
+  if(existing) existing.remove();
+  if(count > 0){
+    const badge = document.createElement('span');
+    badge.className = 'journal-badge';
+    badge.style.cssText='background:#e05050;color:#fff;border-radius:10px;font-size:.5rem;padding:1px 5px;margin-left:4px;font-weight:700;';
+    badge.textContent = count;
+    btn.appendChild(badge);
+  }
+}
+
+function setHistStatusFilter(val, btn){
+  histStatusFilter = val;
+  document.querySelectorAll('#hist-status-row .filter-chip').forEach(c=>c.classList.remove('active'));
+  if(btn) btn.classList.add('active');
+  if(val === 'unread') markAllRead();
+  renderHistoryTab();
+}
 
 function setHistFilter(val, btn){
   histTypeFilter = val;
-  document.querySelectorAll('.filter-chip').forEach(c=>c.classList.remove('active'));
+  // Only reset active on type chips row (not status row)
+  document.querySelectorAll('#drawer-body > div:nth-child(2) .filter-chip').forEach(c=>c.classList.remove('active'));
   if(btn) btn.classList.add('active');
   renderHistoryTab();
 }
@@ -3471,55 +3510,73 @@ function renderHistoryTab(){
 
   const today = new Date().toISOString().slice(0,10);
 
-  // Past events
   let pastEvts = state.history.map(e=>({...e, _kind:'done', _date:e.date}));
-
-  // Planned events — expand recurring to next occurrence
   let plannedEvts = (state.plans||[])
     .filter(p=>!p.done)
     .map(p=>({...p, _kind:'plan', _date: calcNextOccurrence(p)}));
 
-  // Merge and filter by type
-  let all = [...pastEvts, ...plannedEvts];
+  // Status filter
+  let all;
+  if(histStatusFilter === 'planned'){
+    all = plannedEvts;
+  } else if(histStatusFilter === 'done'){
+    all = pastEvts;
+  } else if(histStatusFilter === 'unread'){
+    all = plannedEvts.filter(p => calcNextOccurrence(p) <= today && !_readIds.has('p'+p.id));
+  } else {
+    all = [...pastEvts, ...plannedEvts];
+  }
+
   if(histTypeFilter) all = all.filter(e=>e.type===histTypeFilter);
 
-  // Sort: future first (upcoming), then past (newest first)
-  // Separate into future and past for clear sections
-  const future = all.filter(e=>e._date >= today).sort((a,b)=>a._date.localeCompare(b._date));
-  const past   = all.filter(e=>e._date <  today).sort((a,b)=>b._date.localeCompare(a._date));
-  const sorted = [...future, ...past];
+  // Sort: unread/overdue first, then future, then past
+  const overdue  = all.filter(e=>e._kind==='plan' && e._date < today).sort((a,b)=>a._date.localeCompare(b._date));
+  const future   = all.filter(e=>e._kind==='plan' && e._date >= today).sort((a,b)=>a._date.localeCompare(b._date));
+  const past     = all.filter(e=>e._kind==='done').sort((a,b)=>b._date.localeCompare(a._date));
+  const sorted   = [...overdue, ...future, ...past];
 
   if(!sorted.length){
     el.innerHTML=`<div class="empty"><div class="empty-icon">📋</div><p>Нічого не знайдено</p></div>`;
     return;
   }
 
-  // Count
   const countEl=document.createElement('div');
   countEl.style.cssText='font-size:.62rem;color:var(--muted);margin-bottom:8px;';
-  countEl.textContent=`${future.length} запланованих · ${past.length} виконаних`;
+  const pCount = overdue.length + future.length;
+  const dCount = past.length;
+  countEl.textContent = histStatusFilter==='done' ? `${dCount} виконаних`
+    : histStatusFilter==='planned' ? `${pCount} запланованих`
+    : histStatusFilter==='unread'  ? `${sorted.length} непрочитаних`
+    : `${pCount} запланованих · ${dCount} виконаних`;
   el.appendChild(countEl);
 
-  // Section dividers
-  let shownFutureHeader = false, shownPastHeader = false;
+  let shownOverdueHeader=false, shownFutureHeader=false, shownPastHeader=false;
 
   sorted.forEach(item=>{
     const em=EVENT_META[item.type]||{icon:'📝',label:'Подія',color:'#888'};
     const isGarden = item.plantId==='garden'||(!item.plantId&&item.gardenWide);
     const plant = isGarden ? null : state.plants.find(p=>p.id===item.plantId);
     const targetLabel = isGarden ? '🏡 Садочок' : plant ? `${(PLANT_META[plant.type]||PLANT_META.other).emoji} ${plant.name}${plant.sort?' · '+plant.sort:''}` : '(видалено)';
-    const isFuture = item._date >= today;
+    const isFuture = item._kind==='plan' && item._date >= today;
+    const isOverdue = item._kind==='plan' && item._date < today;
+    const isDone = item._kind==='done';
 
-    // Section header
+    if(isOverdue && !shownOverdueHeader){
+      shownOverdueHeader=true;
+      const hdr=document.createElement('div');
+      hdr.style.cssText='font-size:.6rem;color:#e07070;font-weight:700;text-transform:uppercase;letter-spacing:.6px;padding:4px 0 6px;display:flex;align-items:center;gap:6px;';
+      hdr.innerHTML='<span>⚠️ Прострочені</span><div style="flex:1;height:1px;background:rgba(224,112,112,.3);"></div>';
+      el.appendChild(hdr);
+    }
     if(isFuture && !shownFutureHeader){
-      shownFutureHeader = true;
+      shownFutureHeader=true;
       const hdr=document.createElement('div');
       hdr.style.cssText='font-size:.6rem;color:var(--gold);font-weight:700;text-transform:uppercase;letter-spacing:.6px;padding:4px 0 6px;display:flex;align-items:center;gap:6px;';
       hdr.innerHTML='<span>📅 Заплановані</span><div style="flex:1;height:1px;background:rgba(201,168,76,.2);"></div>';
       el.appendChild(hdr);
     }
-    if(!isFuture && !shownPastHeader){
-      shownPastHeader = true;
+    if(isDone && !shownPastHeader){
+      shownPastHeader=true;
       const hdr=document.createElement('div');
       hdr.style.cssText='font-size:.6rem;color:var(--muted);font-weight:700;text-transform:uppercase;letter-spacing:.6px;padding:8px 0 6px;display:flex;align-items:center;gap:6px;';
       hdr.innerHTML='<span>✅ Виконані</span><div style="flex:1;height:1px;background:rgba(255,255,255,.06);"></div>';
@@ -3530,11 +3587,12 @@ function renderHistoryTab(){
     d.className=`hist-item type-${item.type}`;
     d.style.borderLeftColor = em.color;
     if(isFuture) d.style.background='rgba(201,168,76,.04)';
+    if(isOverdue) d.style.background='rgba(224,112,112,.06)';
 
     const repeatL={none:'',weekly:'↻ щотижня',biweekly:'↻2тижні',monthly:'↻щомісяця',yearly:'↻щороку'};
     const daysLeft = Math.round((new Date(item._date)-new Date(today))/(1000*60*60*24));
-    const dateLabel = isFuture
-      ? (daysLeft===0?'Сьогодні':daysLeft===1?'Завтра':`за ${daysLeft} д. · ${formatDate(item._date)}`)
+    const dateLabel = item._kind==='plan'
+      ? (daysLeft===0?'Сьогодні':daysLeft===1?'Завтра':daysLeft<0?`${Math.abs(daysLeft)} дн. тому · ${formatDate(item._date)}`:`за ${daysLeft} д. · ${formatDate(item._date)}`)
       : formatDate(item._date);
 
     if(item._kind==='plan'){
@@ -3660,7 +3718,19 @@ function openDrawer(mode, filter){
       });
     }
   } else if(mode==='history'){
-    // Type chips only
+    // Status filter row (Заплановані/Виконані/Всі/Непрочитані)
+    const statusRow = document.createElement('div');
+    statusRow.id = 'hist-status-row';
+    statusRow.style.cssText='display:flex;gap:4px;flex-wrap:wrap;margin-bottom:6px;flex-shrink:0;';
+    statusRow.innerHTML=`
+      <button class="filter-chip" id="hst-all" onclick="setHistStatusFilter('all',this)">📋 Всі</button>
+      <button class="filter-chip active" id="hst-planned" onclick="setHistStatusFilter('planned',this)">📅 Заплановані</button>
+      <button class="filter-chip" id="hst-done" onclick="setHistStatusFilter('done',this)">✅ Виконані</button>
+      <button class="filter-chip" id="hst-unread" onclick="setHistStatusFilter('unread',this)">🔴 Непрочитані</button>
+    `;
+    body.appendChild(statusRow);
+
+    // Type chips
     const chips = document.createElement('div');
     chips.style.cssText='display:flex;gap:4px;flex-wrap:wrap;margin-bottom:10px;flex-shrink:0;';
     chips.innerHTML=`
@@ -3679,6 +3749,7 @@ function openDrawer(mode, filter){
     list.id = 'hist-list';
     body.appendChild(list);
     histTypeFilter = '';
+    histStatusFilter = 'planned';
     renderHistoryTab();
   }
 
@@ -5277,6 +5348,7 @@ document.querySelectorAll('.modal-overlay').forEach(ov=>{
     renderDashboard();
     updateGridUI();
     updateUserUI();
+    updateJournalBadge();
     // Запускаємо Firebase якщо вже готовий, або чекаємо
     if(window.firebaseReady) startFirebaseSync();
     // else — firebase-ready listener запустить його
