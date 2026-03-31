@@ -28,7 +28,7 @@
 <!-- Firebase -->
 <script type="module">
   import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js';
-  import { getFirestore, doc, setDoc, onSnapshot, getDoc } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js';
+  import { getFirestore, initializeFirestore, doc, setDoc, onSnapshot, getDoc } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js';
   import { getMessaging, getToken, onMessage } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-messaging.js';
 
   const firebaseConfig = {
@@ -43,7 +43,10 @@
   const VAPID_KEY = "BFZsZJFIJt2w8dii4RA0KEy6IhwZUGo3dWxx2EbK5haNMLtDHEJzucus6Q61wYhtLD9zo3plxhFRmg7Bb842N4A";
 
   const app = initializeApp(firebaseConfig);
-  const db = getFirestore(app);
+  const db = initializeFirestore(app, {
+    experimentalForceLongPolling: true,
+    useFetchStreams: false
+  });
 
   // ── Зберігаємо дані в Firebase ──
   window.firebaseSave = async (gardenId, data) => {
@@ -2484,6 +2487,7 @@ function saveData(silent){
     const fbKey = `shared_${gid}`;
     _fbLastSaveTime = Date.now();
     _fbLastSaveId = activeUserId + '_' + _fbLastSaveTime;
+    console.log('[Firebase] Saving, id:', _fbLastSaveId, 'plans:', state.plans?.length, 'history:', state.history?.length);
     window.firebaseSave(fbKey, {...state, _saveId: _fbLastSaveId});
   }
 
@@ -2511,12 +2515,13 @@ function startFirebaseSync(){
   console.log('[Firebase] Subscribing to:', fbKey);
 
   _fbUnsubscribe = window.firebaseSubscribe(fbKey, (remoteState) => {
+    console.log('[Firebase] Got update, saveId:', remoteState._saveId, 'myId:', _fbLastSaveId);
     // Ігноруємо тільки якщо це наше власне збереження (по унікальному ID)
     if(remoteState._saveId && remoteState._saveId === _fbLastSaveId) {
       console.log('[Firebase] Skipping own update');
       return;
     }
-    console.log('[Firebase] Got update from another device, applying...');
+    console.log('[Firebase] Applying remote state, plants:', remoteState.plants?.length, 'plans:', remoteState.plans?.length, 'history:', remoteState.history?.length);
 
     state.plants = remoteState.plants || state.plants;
     state.history = remoteState.history || state.history;
