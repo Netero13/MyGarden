@@ -160,6 +160,28 @@
   // Запускаємо FCM після того як SW зареєстровано
   navigator.serviceWorker.ready.then(()=> initFCM());
 
+  // Якщо дозвіл вже є — автоматично оновлюємо токен при старті
+  if(typeof Notification !== 'undefined' && Notification.permission === 'granted'){
+    navigator.serviceWorker.ready.then(async (swReg) => {
+      try {
+        const messaging2 = getMessaging(app);
+        const token = await getToken(messaging2, { vapidKey: VAPID_KEY, serviceWorkerRegistration: swReg });
+        if(token){
+          window._fcmToken = token;
+          // Зберігаємо після того як activeUserId буде готовий
+          const saveWhenReady = () => {
+            if(window.activeUserId && window.saveFcmToken){
+              window.saveFcmToken(window.activeUserId, token);
+            } else {
+              setTimeout(saveWhenReady, 500);
+            }
+          };
+          saveWhenReady();
+        }
+      } catch(e) { /* тихо */ }
+    });
+  }
+
   window.firebaseReady = true;
   window.dispatchEvent(new Event('firebase-ready'));
 </script>
@@ -1806,6 +1828,7 @@ function defaultPlants(){
 const USERS_KEY  = 'gardenUsers_v1';
 const ACTIVE_KEY = 'gardenActiveUser_v1';
 const ACTIVE_GARDEN_KEY = 'gardenActiveGarden_v1';
+window.activeUserId = null;
 let activeUserId  = null;
 let activeGardenId = null;
 
@@ -1884,6 +1907,7 @@ function switchUser(userId){
   if(activeUserId) saveData(true);
   if(_fbUnsubscribe){ _fbUnsubscribe(); _fbUnsubscribe = null; }
   activeUserId = userId;
+  window.activeUserId = userId;
   localStorage.setItem(ACTIVE_KEY, userId);
   const lastGarden = localStorage.getItem(ACTIVE_GARDEN_KEY+'_'+userId) || 'g_default';
   activeGardenId = lastGarden;
@@ -5353,6 +5377,7 @@ document.querySelectorAll('.modal-overlay').forEach(ov=>{
   const users = getUsers();
   if(savedActive && users.find(u=>u.id===savedActive)){
     activeUserId = savedActive;
+    window.activeUserId = savedActive;
     activeGardenId = localStorage.getItem(ACTIVE_GARDEN_KEY+'_'+savedActive) || 'g_default';
     loadData();
     resizeCanvas();
