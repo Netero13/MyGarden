@@ -168,8 +168,7 @@
   if(typeof Notification !== 'undefined' && Notification.permission === 'granted'){
     navigator.serviceWorker.ready.then(async (swReg) => {
       try {
-        const messaging2 = getMessaging(app);
-        const token = await getToken(messaging2, { vapidKey: VAPID_KEY, serviceWorkerRegistration: swReg });
+        const token = await getToken(window._firebaseMessaging, { vapidKey: VAPID_KEY, serviceWorkerRegistration: swReg });
         if(token){
           window._fcmToken = token;
           window._pendingFcmToken = token;
