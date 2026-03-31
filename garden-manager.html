@@ -808,6 +808,9 @@ select option{background:#111d11;}
     <button onclick="closeGardenMenu()" style="background:none;border:none;color:var(--muted);cursor:pointer;font-size:1rem;padding:4px 6px;">✕</button>
   </div>
   <div id="garden-list" style="flex:1;overflow-y:auto;padding:12px;"></div>
+  <div style="padding:12px;border-top:1px solid var(--border);">
+    <button onclick="enablePushNotifications()" style="width:100%;padding:10px;background:rgba(201,168,76,.1);border:1px solid rgba(201,168,76,.25);color:var(--gold);border-radius:10px;cursor:pointer;font-family:'DM Sans',sans-serif;font-size:.8rem;">🔔 Увімкнути сповіщення</button>
+  </div>
 </div>
 <div id="garden-menu-overlay" onclick="closeGardenMenu()"></div>
 
@@ -5191,6 +5194,27 @@ window.addEventListener('fcm-token-ready', (e)=>{
     window.saveFcmToken(activeUserId, e.detail);
   }
 });
+
+async function enablePushNotifications(){
+  try {
+    const permission = await Notification.requestPermission();
+    if(permission !== 'granted'){
+      toast('❌ Сповіщення відхилено');
+      return;
+    }
+    // Якщо токен вже є — зберігаємо
+    if(window._fcmToken && activeUserId && window.saveFcmToken){
+      await window.saveFcmToken(activeUserId, window._fcmToken);
+      toast('🔔 Сповіщення увімкнено!');
+      return;
+    }
+    // Інакше запускаємо ініціалізацію FCM заново
+    if(window.initFCMManually) window.initFCMManually();
+    toast('🔔 Сповіщення увімкнено!');
+  } catch(e) {
+    toast('❌ Помилка: ' + e.message);
+  }
+}
 
 // Plan filter: no longer a select, calendar handles it
 
