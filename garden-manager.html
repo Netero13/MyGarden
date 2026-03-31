@@ -810,7 +810,7 @@ select option{background:#111d11;}
   animation:pulse 2s infinite;
 }
 @keyframes pulse{0%,100%{opacity:0;transform:scale(1);}50%{opacity:.4;transform:scale(1.1);}}
-@keyframes highlightNew{0%{background:rgba(201,168,76,.25);}100%{background:transparent;}}
+@keyframes highlightNew{0%{background:rgba(201,168,76,.35);box-shadow:0 0 0 2px rgba(201,168,76,.3);}70%{background:rgba(201,168,76,.15);}100%{background:transparent;box-shadow:none;}}
 
 /* ─── GRID CONTROL BUTTONS ─── */
 .gc-btn{
@@ -3529,6 +3529,7 @@ function renderPlantsTab(){
 let histTypeFilter = '';
 let histStatusFilter = 'planned';
 let _readIds = new Set(JSON.parse(localStorage.getItem('readIds')||'[]'));
+let _lastNewItemId = null; // id щойно створеної події для підсвічування
 let _lastSeenHistCount = parseInt(localStorage.getItem('lastSeenHistCount')||'0');
 let _lastSeenPlanCount = parseInt(localStorage.getItem('lastSeenPlanCount')||'0');
 
@@ -3547,6 +3548,11 @@ function markAllRead(){
   const today = new Date().toISOString().slice(0,10);
   (state.plans||[]).filter(p=>!p.done && calcNextOccurrence(p)<=today).forEach(p=>_readIds.add('p'+p.id));
   localStorage.setItem('readIds', JSON.stringify([..._readIds]));
+  // Зберігаємо всі відомі id
+  const histIds = (state.history||[]).map(e=>String(e.id));
+  const planIds = (state.plans||[]).filter(p=>!p.done).map(p=>String(p.id));
+  localStorage.setItem('knownHistIds', JSON.stringify(histIds));
+  localStorage.setItem('knownPlanIds', JSON.stringify(planIds));
   _lastSeenHistCount = (state.history||[]).length;
   _lastSeenPlanCount = (state.plans||[]).filter(p=>!p.done).length;
   localStorage.setItem('lastSeenHistCount', _lastSeenHistCount);
@@ -3594,10 +3600,14 @@ function renderHistoryTab(){
 
   const today = new Date().toISOString().slice(0,10);
 
-  let pastEvts = state.history.map((e,i)=>({...e, _kind:'done', _date:e.date, _isNew: i >= _lastSeenHistCount}));
+  // Визначаємо нові елементи по id
+  const knownHistIds = new Set(JSON.parse(localStorage.getItem('knownHistIds')||'[]'));
+  const knownPlanIds = new Set(JSON.parse(localStorage.getItem('knownPlanIds')||'[]'));
+
+  let pastEvts = state.history.map(e=>({...e, _kind:'done', _date:e.date, _isNew: knownHistIds.size > 0 && !knownHistIds.has(String(e.id))}));
   let plannedEvts = (state.plans||[])
     .filter(p=>!p.done)
-    .map((p,i)=>({...p, _kind:'plan', _date: calcNextOccurrence(p), _isNew: i >= _lastSeenPlanCount}));
+    .map(p=>({...p, _kind:'plan', _date: calcNextOccurrence(p), _isNew: knownPlanIds.size > 0 && !knownPlanIds.has(String(p.id))}));
 
   // Status filter
   let all;
@@ -3614,7 +3624,7 @@ function renderHistoryTab(){
   // Sort: unread/overdue first, then future, then past
   const overdue  = all.filter(e=>e._kind==='plan' && e._date < today).sort((a,b)=>a._date.localeCompare(b._date));
   const future   = all.filter(e=>e._kind==='plan' && e._date >= today).sort((a,b)=>a._date.localeCompare(b._date));
-  const past     = all.filter(e=>e._kind==='done').sort((a,b)=>b._date.localeCompare(a._date));
+  const past     = all.filter(e=>e._kind==='done').sort((a,b)=>b.id-a.id);
   const sorted   = [...overdue, ...future, ...past];
 
   if(!sorted.length){
@@ -3701,9 +3711,11 @@ function renderHistoryTab(){
         ${item.photo?`<img src="${item.photo}" class="hist-img" alt="фото" onclick="viewPhoto('${item.photo}')" style="cursor:zoom-in;">`:''}
       `;
     }
-    // Підсвічуємо нові події (додані після останнього перегляду)
-    if(item._isNew){
-      d.style.animation='highlightNew 2s ease forwards';
+    // Підсвічуємо нові події (від іншого або щойно створені)
+    if(item._isNew || item.id === _lastNewItemId){
+      d.style.animation='highlightNew 3s ease forwards';
+      d.style.borderRadius='8px';
+      if(item.id === _lastNewItemId) setTimeout(()=>{ _lastNewItemId = null; }, 3500);
     }
     el.appendChild(d);
   });
@@ -4161,7 +4173,9 @@ function saveUnifiedEvent(){
       editingPlanId = null;
       toast('✅ План оновлено');
     } else {
-      state.plans.push({ id:Date.now(), plantId, type, date, repeat, comment, ownerNote, scope:plantId==='garden'?'garden':'plant', done:false, author: getActiveUser() ? {id:activeUserId, name:getActiveUser().name, avatar:getActiveUser().avatar, role:getActiveUser().role} : null });
+      const newId = Date.now();
+      _lastNewItemId = newId;
+      state.plans.push({ id:newId, plantId, type, date, repeat, comment, ownerNote, scope:plantId==='garden'?'garden':'plant', done:false, author: getActiveUser() ? {id:activeUserId, name:getActiveUser().name, avatar:getActiveUser().avatar, role:getActiveUser().role} : null });
       toast('📅 Заплановано!');
     }
     closeModal('eventModal');
@@ -4177,7 +4191,9 @@ function saveUnifiedEvent(){
       );
     }
   } else {
-    state.history.push({ id:Date.now(), plantId, date, type, comment, ownerNote, photo:evPhotoBase64||null, author: getActiveUser() ? {id:activeUserId, name:getActiveUser().name, avatar:getActiveUser().avatar, role:getActiveUser().role} : null });
+    const newId = Date.now();
+    _lastNewItemId = newId;
+    state.history.push({ id:newId, plantId, date, type, comment, ownerNote, photo:evPhotoBase64||null, author: getActiveUser() ? {id:activeUserId, name:getActiveUser().name, avatar:getActiveUser().avatar, role:getActiveUser().role} : null });
     closeModal('eventModal');
     saveData(); renderSidebar(); renderMap();
     if(selectedId && selectedId===plantId) openDetail(plantId);
