@@ -108,7 +108,8 @@
       await setDoc(doc(db, 'notifications', 'latest'), {
         title, body, authorName,
         sentAt: now,
-        uid: activeUserId // щоб відрізняти від кого
+        pushId: activeUserId + '_' + now, // унікальний id для дедуплікації
+        uid: activeUserId
       });
     } catch(e) {
       console.warn('[FCM] Push send error:', e);
