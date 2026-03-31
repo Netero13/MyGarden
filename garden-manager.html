@@ -2489,6 +2489,8 @@ function saveData(silent){
     _fbLastSaveId = activeUserId + '_' + _fbLastSaveTime;
     console.log('[Firebase] Saving, id:', _fbLastSaveId, 'plans:', state.plans?.length, 'history:', state.history?.length);
     window.firebaseSave(fbKey, {...state, _saveId: _fbLastSaveId});
+  } else {
+    console.warn('[Firebase] Save SKIPPED — ready:', window.firebaseReady, 'enabled:', _fbSyncEnabled);
   }
 
   if(!silent){
@@ -5441,9 +5443,14 @@ document.querySelectorAll('.modal-overlay').forEach(ov=>{
     updateGridUI();
     updateUserUI();
     updateJournalBadge();
-    // Запускаємо Firebase якщо вже готовий, або чекаємо
-    if(window.firebaseReady) startFirebaseSync();
-    // else — firebase-ready listener запустить його
+    // Запускаємо Firebase sync
+    if(window.firebaseReady){
+      startFirebaseSync();
+    }
+    // Додатково — якщо firebase-ready вже відбулось але sync не запустився
+    setTimeout(()=>{
+      if(window.firebaseReady && !_fbSyncEnabled) startFirebaseSync();
+    }, 1000);
   } else if(users.length===0){
     // First launch — створюємо два дефолтних профілі
     const now = Date.now();
