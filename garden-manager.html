@@ -168,15 +168,7 @@
         const token = await getToken(messaging2, { vapidKey: VAPID_KEY, serviceWorkerRegistration: swReg });
         if(token){
           window._fcmToken = token;
-          // Зберігаємо після того як activeUserId буде готовий
-          const saveWhenReady = () => {
-            if(window.activeUserId && window.saveFcmToken){
-              window.saveFcmToken(window.activeUserId, token);
-            } else {
-              setTimeout(saveWhenReady, 500);
-            }
-          };
-          saveWhenReady();
+          window._pendingFcmToken = token;
         }
       } catch(e) { /* тихо */ }
     });
@@ -847,7 +839,8 @@ select option{background:#111d11;}
   </div>
   <div id="garden-list" style="flex:1;overflow-y:auto;padding:12px;"></div>
   <div style="padding:12px;border-top:1px solid var(--border);">
-    <button id="push-notify-btn" onclick="enablePushNotifications()" style="width:100%;padding:10px;background:rgba(201,168,76,.1);border:1px solid rgba(201,168,76,.25);color:var(--gold);border-radius:10px;cursor:pointer;font-family:'DM Sans',sans-serif;font-size:.8rem;">🔔 Увімкнути сповіщення</button>
+    <button id="push-notify-btn" onclick="enablePushNotifications()" style="width:100%;padding:10px;background:rgba(201,168,76,.1);border:1px solid rgba(201,168,76,.25);color:var(--gold);border-radius:10px;cursor:pointer;font-family:'DM Sans',sans-serif;font-size:.8rem;margin-bottom:6px;">🔔 Увімкнути сповіщення</button>
+    <button onclick="clearAllEvents()" style="width:100%;padding:10px;background:rgba(192,64,64,.1);border:1px solid rgba(192,64,64,.25);color:#e07070;border-radius:10px;cursor:pointer;font-family:'DM Sans',sans-serif;font-size:.8rem;">🗑️ Очистити всі події</button>
   </div>
 </div>
 <div id="garden-menu-overlay" onclick="closeGardenMenu()"></div>
@@ -973,12 +966,12 @@ select option{background:#111d11;}
       </div>
     </div>
     <!-- Рядок 2: дії (горизонтальний скрол) -->
-    <div class="tb-row tb-row-2">
+    <div class="tb-row tb-row-2" style="position:relative;">
+      <div class="add-menu-wrap" id="addMenuWrap" style="flex-shrink:0;position:sticky;left:0;z-index:10;background:var(--bg);padding-right:4px;">
+        <button class="tool-btn add-main-btn" onclick="toggleAddMenu()" title="Додати" style="background:var(--gold);color:#0a140a;border-color:var(--gold);font-size:1.2rem;width:36px;height:36px;padding:0;border-radius:10px;">＋</button>
+      </div>
       <button class="tool-btn" onclick="openCalendarModal()">📅 Календар</button>
       <button class="tool-btn" onclick="openSortsModal()">🌱 Каталог</button>
-      <div class="add-menu-wrap" id="addMenuWrap">
-        <button class="tool-btn add-main-btn" onclick="toggleAddMenu()" title="Додати">＋</button>
-      </div>
       <button id="journal-btn" class="tool-btn" onclick="openDrawer('history')">📋 Журнал</button>
       <button class="tool-btn" id="btn-move" onclick="setMode('move')">🪚 Змінити</button>
     </div>
@@ -1828,7 +1821,6 @@ function defaultPlants(){
 const USERS_KEY  = 'gardenUsers_v1';
 const ACTIVE_KEY = 'gardenActiveUser_v1';
 const ACTIVE_GARDEN_KEY = 'gardenActiveGarden_v1';
-window.activeUserId = null;
 let activeUserId  = null;
 let activeGardenId = null;
 
@@ -1907,7 +1899,12 @@ function switchUser(userId){
   if(activeUserId) saveData(true);
   if(_fbUnsubscribe){ _fbUnsubscribe(); _fbUnsubscribe = null; }
   activeUserId = userId;
-  window.activeUserId = userId;
+  localStorage.setItem(ACTIVE_KEY, userId);
+  // Зберігаємо FCM токен якщо він вже є
+  if(window._pendingFcmToken && window.saveFcmToken){
+    window.saveFcmToken(userId, window._pendingFcmToken);
+    window._pendingFcmToken = null;
+  }
   localStorage.setItem(ACTIVE_KEY, userId);
   const lastGarden = localStorage.getItem(ACTIVE_GARDEN_KEY+'_'+userId) || 'g_default';
   activeGardenId = lastGarden;
@@ -2002,6 +1999,7 @@ function openGardenMenu(){
   renderGardenMenu();
   document.getElementById('garden-menu').classList.add('open');
   document.getElementById('garden-menu-overlay').classList.add('open');
+  setTimeout(updatePushButton, 50);
 }
 function closeGardenMenu(){
   document.getElementById('garden-menu').classList.remove('open');
@@ -3035,6 +3033,8 @@ function updateGridUI(){
 function calcNextOccurrence(plan, fromDate){
   const today = fromDate || new Date().toISOString().slice(0,10);
   if(!plan.repeat || plan.repeat==='none') return plan.date;
+  // Якщо дата в майбутньому — повертаємо як є
+  if(plan.date >= today) return plan.date;
   const orig = new Date(plan.date);
   const om = orig.getMonth(), od = orig.getDate();
   const now = new Date(today);
@@ -3758,8 +3758,8 @@ function openDrawer(mode, filter){
     statusRow.id = 'hist-status-row';
     statusRow.style.cssText='display:flex;gap:4px;flex-wrap:wrap;margin-bottom:6px;flex-shrink:0;';
     statusRow.innerHTML=`
-      <button class="filter-chip" id="hst-all" onclick="setHistStatusFilter('all',this)">📋 Всі</button>
-      <button class="filter-chip active" id="hst-planned" onclick="setHistStatusFilter('planned',this)">📅 Заплановані</button>
+      <button class="filter-chip active" id="hst-all" onclick="setHistStatusFilter('all',this)">📋 Всі</button>
+      <button class="filter-chip" id="hst-planned" onclick="setHistStatusFilter('planned',this)">📅 Заплановані</button>
       <button class="filter-chip" id="hst-done" onclick="setHistStatusFilter('done',this)">✅ Виконані</button>
       <button class="filter-chip" id="hst-unread" onclick="setHistStatusFilter('unread',this)">🔴 Непрочитані</button>
     `;
@@ -3784,7 +3784,7 @@ function openDrawer(mode, filter){
     list.id = 'hist-list';
     body.appendChild(list);
     histTypeFilter = '';
-    histStatusFilter = 'planned';
+    histStatusFilter = 'all';
     renderHistoryTab();
   }
 
@@ -4089,7 +4089,7 @@ function saveUnifiedEvent(){
       toast('📅 Заплановано!');
     }
     closeModal('eventModal');
-    autoSave(); renderSidebar(); renderDashboard();
+    saveData(); renderSidebar(); renderDashboard();
     // Push notification
     if(window.sendPushNotification){
       const user = getActiveUser();
@@ -4103,7 +4103,7 @@ function saveUnifiedEvent(){
   } else {
     state.history.push({ id:Date.now(), plantId, date, type, comment, ownerNote, photo:evPhotoBase64||null, author: getActiveUser() ? {id:activeUserId, name:getActiveUser().name, avatar:getActiveUser().avatar, role:getActiveUser().role} : null });
     closeModal('eventModal');
-    autoSave(); renderSidebar(); renderMap();
+    saveData(); renderSidebar(); renderMap();
     if(selectedId && selectedId===plantId) openDetail(plantId);
     toast(`${EVENT_META[type]?.icon||'✅'} Подію збережено!`);
     // Push notification
@@ -5342,6 +5342,7 @@ async function enablePushNotifications(){
       await window.saveFcmToken(activeUserId, token);
       console.log('[FCM] Token saved for', activeUserId, token.slice(0,20)+'...');
       toast('🔔 Сповіщення увімкнено!');
+      localStorage.setItem('pushEnabled', '1');
       if(btn){ btn.textContent='🔔 Сповіщення: ON'; btn.style.color='#4caf50'; btn.style.borderColor='rgba(76,175,80,.4)'; btn.onclick=disablePushNotifications; }
     } else {
       toast('⚠️ Не вдалось отримати токен. Спробуйте як PWA');
@@ -5352,10 +5353,34 @@ async function enablePushNotifications(){
   }
 }
 
+function clearAllEvents(){
+  if(!confirm('Видалити ВСІ події та плани? Рослини залишаться. Це незворотно!')) return;
+  state.history = [];
+  state.plans = [];
+  saveData();
+  renderSidebar();
+  renderDashboard();
+  renderMap();
+  closeGardenMenu();
+  toast('🗑️ Всі події видалено');
+}
+
 function disablePushNotifications(){
   const btn = document.getElementById('push-notify-btn');
+  localStorage.removeItem('pushEnabled');
   toast('🔕 Сповіщення вимкнено');
   if(btn){ btn.textContent='🔔 Увімкнути сповіщення'; btn.style.color=''; btn.style.borderColor=''; btn.onclick=enablePushNotifications; }
+}
+
+function updatePushButton(){
+  const btn = document.getElementById('push-notify-btn');
+  if(!btn) return;
+  const enabled = localStorage.getItem('pushEnabled') === '1';
+  if(enabled){
+    btn.textContent='🔔 Сповіщення: ON'; btn.style.color='#4caf50'; btn.style.borderColor='rgba(76,175,80,.4)'; btn.onclick=disablePushNotifications;
+  } else {
+    btn.textContent='🔔 Увімкнути сповіщення'; btn.style.color=''; btn.style.borderColor=''; btn.onclick=enablePushNotifications;
+  }
 }
 
 // Plan filter: no longer a select, calendar handles it
@@ -5377,7 +5402,13 @@ document.querySelectorAll('.modal-overlay').forEach(ov=>{
   const users = getUsers();
   if(savedActive && users.find(u=>u.id===savedActive)){
     activeUserId = savedActive;
-    window.activeUserId = savedActive;
+    // Зберігаємо FCM токен якщо вже є
+    setTimeout(()=>{
+      if(window._pendingFcmToken && window.saveFcmToken){
+        window.saveFcmToken(savedActive, window._pendingFcmToken);
+        window._pendingFcmToken = null;
+      }
+    }, 2000);
     activeGardenId = localStorage.getItem(ACTIVE_GARDEN_KEY+'_'+savedActive) || 'g_default';
     loadData();
     resizeCanvas();
