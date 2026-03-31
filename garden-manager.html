@@ -92,11 +92,16 @@
   };
 
   // ── Відправляємо push через Firestore тригер ──
+  let _lastPushTime = 0;
   window.sendPushNotification = async (title, body, authorName) => {
+    // Дедуплікація — не відправляти якщо попередній був менше 2 секунди тому
+    const now = Date.now();
+    if(now - _lastPushTime < 2000) return;
+    _lastPushTime = now;
     try {
       await setDoc(doc(db, 'notifications', 'latest'), {
         title, body, authorName,
-        sentAt: Date.now()
+        sentAt: now
       });
     } catch(e) {
       console.warn('[FCM] Push send error:', e);
