@@ -951,7 +951,10 @@ select option{background:#111d11;}
 <div id="drawer">
   <div id="drawer-head">
     <div id="drawer-title" style="font-family:'Cormorant Garamond',serif;font-size:1.1rem;font-weight:700;color:var(--gold-light);"></div>
-    <button class="modal-close" onclick="closeDrawer()">✕</button>
+    <div style="display:flex;gap:6px;align-items:center;">
+      <button id="drawer-add-btn" onclick="openAddEventFromJournal()" style="display:none;background:var(--gold);color:#0a140a;border:none;border-radius:8px;width:32px;height:32px;font-size:1.2rem;font-weight:700;cursor:pointer;display:none;align-items:center;justify-content:center;">+</button>
+      <button class="modal-close" onclick="closeDrawer()">✕</button>
+    </div>
   </div>
   <div id="drawer-body"></div>
 </div>
@@ -2194,10 +2197,19 @@ function renderProfileList(){
   if(!el) return;
   el.innerHTML='';
   const users = getUsers();
+  // Беремо збережений лічильник (актуальний після останнього сеансу)
+  const cachedUnread = parseInt(localStorage.getItem('cachedUnreadCount')||'0');
   users.forEach(u=>{
     const btn=document.createElement('button');
     btn.className='profile-card'+(u.id===activeUserId?' active':'');
+    btn.style.position='relative';
     btn.innerHTML=`<div class="profile-avatar">${u.avatarPhoto?`<img src="${u.avatarPhoto}" style="width:100%;height:100%;object-fit:cover;border-radius:50%;">`:u.avatar}</div><div class="profile-name">${u.name}</div>${u.role?`<div class="profile-role">${u.role}</div>`:''}`;
+    if(cachedUnread > 0){
+      const dot = document.createElement('span');
+      dot.style.cssText='position:absolute;top:5px;right:5px;min-width:16px;height:16px;background:#e05050;border-radius:10px;font-size:.5rem;color:#fff;font-weight:700;display:flex;align-items:center;justify-content:center;padding:0 3px;';
+      dot.textContent = cachedUnread;
+      btn.appendChild(dot);
+    }
     btn.onclick=()=>{ hideProfileScreen(); switchUser(u.id); };
     el.appendChild(btn);
   });
@@ -3514,30 +3526,37 @@ function renderPlantsTab(){
 let histTypeFilter = '';
 let histStatusFilter = 'planned';
 let _readIds = new Set(JSON.parse(localStorage.getItem('readIds')||'[]'));
+let _lastSeenHistCount = parseInt(localStorage.getItem('lastSeenHistCount')||'0');
+let _lastSeenPlanCount = parseInt(localStorage.getItem('lastSeenPlanCount')||'0');
 
 function getUnreadCount(){
   const today = new Date().toISOString().slice(0,10);
-  return (state.plans||[]).filter(p=>{
+  const overdueUnread = (state.plans||[]).filter(p=>{
     if(p.done) return false;
-    const next = calcNextOccurrence(p);
-    return next <= today && !_readIds.has('p'+p.id);
+    return calcNextOccurrence(p) <= today && !_readIds.has('p'+p.id);
   }).length;
+  const newEvents = Math.max(0, (state.history||[]).length - _lastSeenHistCount);
+  const newPlans  = Math.max(0, (state.plans||[]).filter(p=>!p.done).length - _lastSeenPlanCount);
+  return overdueUnread + newEvents + newPlans;
 }
 
 function markAllRead(){
   const today = new Date().toISOString().slice(0,10);
-  (state.plans||[]).filter(p=>{
-    if(p.done) return false;
-    return calcNextOccurrence(p) <= today;
-  }).forEach(p=>_readIds.add('p'+p.id));
+  (state.plans||[]).filter(p=>!p.done && calcNextOccurrence(p)<=today).forEach(p=>_readIds.add('p'+p.id));
   localStorage.setItem('readIds', JSON.stringify([..._readIds]));
+  _lastSeenHistCount = (state.history||[]).length;
+  _lastSeenPlanCount = (state.plans||[]).filter(p=>!p.done).length;
+  localStorage.setItem('lastSeenHistCount', _lastSeenHistCount);
+  localStorage.setItem('lastSeenPlanCount', _lastSeenPlanCount);
   updateJournalBadge();
 }
 
 function updateJournalBadge(){
   const btn = document.getElementById('journal-btn');
-  if(!btn) return;
   const count = getUnreadCount();
+  // Зберігаємо для початкового екрану
+  localStorage.setItem('cachedUnreadCount', count);
+  if(!btn) return;
   const existing = btn.querySelector('.journal-badge');
   if(existing) existing.remove();
   if(count > 0){
@@ -3648,8 +3667,10 @@ function renderHistoryTab(){
     const d=document.createElement('div');
     d.className=`hist-item type-${item.type}`;
     d.style.borderLeftColor = em.color;
+    d.style.cursor = 'pointer';
     if(isFuture) d.style.background='rgba(201,168,76,.04)';
     if(isOverdue) d.style.background='rgba(224,112,112,.06)';
+    d.onclick=(e)=>{ if(e.target.closest('button')) return; openHistItem(item); };
 
     const repeatL={none:'',weekly:'↻ щотижня',biweekly:'↻2тижні',monthly:'↻щомісяця',yearly:'↻щороку'};
     const daysLeft = Math.round((new Date(item._date)-new Date(today))/(1000*60*60*24));
@@ -3739,11 +3760,24 @@ function openDrawer(mode, filter){
   const overlay = document.getElementById('drawer-overlay');
   const title   = document.getElementById('drawer-title');
   const body    = document.getElementById('drawer-body');
+  const addBtn  = document.getElementById('drawer-add-btn');
   const titles  = {plants:'🌳 Рослини', history:'🪵 Журнал'};
   title.textContent = titles[mode]||'';
   body.innerHTML = '';
 
-  // always from right
+  // Показуємо кнопку + тільки в журналі
+  if(addBtn){
+    if(mode==='history'){
+      addBtn.style.display='flex';
+    } else {
+      addBtn.style.display='none';
+    }
+  }
+
+  // При відкритті журналу — позначаємо всі як прочитані
+  if(mode==='history'){
+    markAllRead();
+  }
 
   if(mode==='plants'){
     // update title based on filter
@@ -5390,6 +5424,49 @@ function clearAllEvents(){
   renderMap();
   closeGardenMenu();
   toast('🗑️ Всі події видалено');
+}
+
+function openAddEventFromJournal(){
+  closeDrawer();
+  setTimeout(()=>{ openAddEvent(); }, 200);
+}
+
+function openHistItem(item){
+  const em = EVENT_META[item.type]||{icon:'📝',label:'Подія',color:'#888'};
+  const isGarden = item.plantId==='garden'||(!item.plantId&&item.gardenWide);
+  const plant = isGarden ? null : state.plants.find(p=>p.id===item.plantId);
+  const targetLabel = isGarden ? '🏡 Весь садочок' : plant ? `${(PLANT_META[plant.type]||PLANT_META.other).emoji} ${plant.name}${plant.sort?' · '+plant.sort:''}` : '(видалено)';
+  const today = new Date().toISOString().slice(0,10);
+  const daysLeft = Math.round((new Date(item._date)-new Date(today))/(1000*60*60*24));
+  const dateLabel = item._kind==='plan'
+    ? (daysLeft===0?'Сьогодні':daysLeft===1?'Завтра':daysLeft<0?`${Math.abs(daysLeft)} дн. тому`:`за ${daysLeft} дн.`)
+    : formatDate(item._date);
+  const repeatL={none:'',weekly:'щотижня',biweekly:'кожні 2 тижні',monthly:'щомісяця',yearly:'щороку'};
+  const dp = document.getElementById('detailPanel');
+  const dpTitle = document.getElementById('dp-title');
+  const dpBody = document.getElementById('dp-body');
+  dpTitle.innerHTML = `${em.icon} ${em.label}`;
+  dpBody.innerHTML = `
+    <div style="display:flex;flex-direction:column;gap:10px;">
+      <div style="background:var(--surface2);border-radius:10px;padding:12px;border-left:3px solid ${em.color};">
+        <div style="font-size:.65rem;color:var(--muted);margin-bottom:4px;">ДАТА</div>
+        <div style="font-weight:600;color:${daysLeft<=0&&item._kind==='plan'?'#e07070':'var(--cream)'};">${dateLabel}${item._date!==today?' · '+formatDate(item._date):''}</div>
+        ${item.repeat&&item.repeat!=='none'?`<div style="font-size:.65rem;color:var(--gold-dim);margin-top:3px;">↻ ${repeatL[item.repeat]}</div>`:''}
+      </div>
+      <div style="background:var(--surface2);border-radius:10px;padding:12px;">
+        <div style="font-size:.65rem;color:var(--muted);margin-bottom:4px;">РОСЛИНА</div>
+        <div style="font-weight:600;">${targetLabel}</div>
+      </div>
+      ${item.comment?`<div style="background:var(--surface2);border-radius:10px;padding:12px;"><div style="font-size:.65rem;color:var(--muted);margin-bottom:4px;">КОМЕНТАР</div><div style="font-size:.82rem;line-height:1.5;">${item.comment}</div></div>`:''}
+      ${item.author?`<div style="font-size:.65rem;color:var(--muted);padding:4px 0;">${authorBadge(item.author)} ${item.author.name}</div>`:''}
+      ${item.photo?`<img src="${item.photo}" style="width:100%;border-radius:10px;object-fit:cover;max-height:200px;cursor:zoom-in;" onclick="viewPhoto('${item.photo}')">`:''}
+      ${item._kind==='plan'?`<div style="display:flex;gap:8px;margin-top:4px;">
+        <button class="btn btn-primary" style="flex:1;" onclick="completePlan(${item.id},event);document.getElementById('detailPanel').style.right='-100vw';renderHistoryTab();">✓ Виконати</button>
+        <button class="btn btn-ghost" onclick="document.getElementById('detailPanel').style.right='-100vw';editPlan(${item.id});">🪶 Редагувати</button>
+      </div>`:''}
+    </div>
+  `;
+  dp.style.right='0';
 }
 
 function disablePushNotifications(){
