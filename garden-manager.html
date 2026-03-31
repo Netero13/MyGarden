@@ -93,15 +93,19 @@
 
   // ── Відправляємо push через Firestore тригер ──
   let _lastPushTime = 0;
+  let _lastPushKey = '';
   window.sendPushNotification = async (title, body, authorName) => {
-    // Дедуплікація — не відправляти якщо попередній був менше 2 секунди тому
     const now = Date.now();
-    if(now - _lastPushTime < 2000) return;
+    const key = title + body;
+    // Дедуплікація — не відправляти якщо такий самий push < 5 секунд тому
+    if(now - _lastPushTime < 5000 && key === _lastPushKey) return;
     _lastPushTime = now;
+    _lastPushKey = key;
     try {
       await setDoc(doc(db, 'notifications', 'latest'), {
         title, body, authorName,
-        sentAt: now
+        sentAt: now,
+        uid: activeUserId // щоб відрізняти від кого
       });
     } catch(e) {
       console.warn('[FCM] Push send error:', e);
@@ -953,7 +957,7 @@ select option{background:#111d11;}
       <div class="add-menu-wrap" id="addMenuWrap">
         <button class="tool-btn add-main-btn" onclick="toggleAddMenu()" title="Додати">＋</button>
       </div>
-      <button class="tool-btn" onclick="openDrawer('history')">📋 Журнал</button>
+      <button id="journal-btn" class="tool-btn" onclick="openDrawer('history')">📋 Журнал</button>
       <button class="tool-btn" id="btn-move" onclick="setMode('move')">🪚 Змінити</button>
     </div>
     <!-- Add menu — поза скролящим рядком щоб працювало в iOS Safari -->
@@ -3460,20 +3464,27 @@ let histTypeFilter = '';
 let histStatusFilter = 'planned';
 let _readIds = new Set(JSON.parse(localStorage.getItem('readIds')||'[]'));
 
+function getUnreadCount(){
+  const today = new Date().toISOString().slice(0,10);
+  return (state.plans||[]).filter(p=>{
+    if(p.done) return false;
+    const next = calcNextOccurrence(p);
+    return next <= today && !_readIds.has('p'+p.id);
+  }).length;
+}
+
 function markAllRead(){
   const today = new Date().toISOString().slice(0,10);
-  (state.plans||[]).filter(p=>!p.done && calcNextOccurrence(p) <= today).forEach(p=>_readIds.add('p'+p.id));
+  (state.plans||[]).filter(p=>{
+    if(p.done) return false;
+    return calcNextOccurrence(p) <= today;
+  }).forEach(p=>_readIds.add('p'+p.id));
   localStorage.setItem('readIds', JSON.stringify([..._readIds]));
   updateJournalBadge();
 }
 
-function getUnreadCount(){
-  const today = new Date().toISOString().slice(0,10);
-  return (state.plans||[]).filter(p=>!p.done && calcNextOccurrence(p) <= today && !_readIds.has('p'+p.id)).length;
-}
-
 function updateJournalBadge(){
-  const btn = document.querySelector('[onclick="openDrawer(\'history\')"]');
+  const btn = document.getElementById('journal-btn');
   if(!btn) return;
   const count = getUnreadCount();
   const existing = btn.querySelector('.journal-badge');
@@ -3481,7 +3492,7 @@ function updateJournalBadge(){
   if(count > 0){
     const badge = document.createElement('span');
     badge.className = 'journal-badge';
-    badge.style.cssText='background:#e05050;color:#fff;border-radius:10px;font-size:.5rem;padding:1px 5px;margin-left:4px;font-weight:700;';
+    badge.style.cssText='background:#e05050;color:#fff;border-radius:10px;font-size:.5rem;padding:1px 5px;margin-left:4px;font-weight:700;vertical-align:middle;';
     badge.textContent = count;
     btn.appendChild(badge);
   }
