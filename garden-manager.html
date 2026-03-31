@@ -1095,7 +1095,7 @@ select option{background:#111d11;}
   position:fixed;right:-100vw;top:0;height:100%;
   width:min(360px, 100vw);
   background:var(--surface);border-left:1px solid var(--border);
-  z-index:40;transition:right .3s;display:flex;flex-direction:column;
+  z-index:300;transition:right .3s;display:flex;flex-direction:column;
   overflow-y:auto;
 ">
   <div style="padding:16px 18px 12px;padding-top:calc(16px + var(--sat));border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;flex-shrink:0;">
@@ -1103,7 +1103,7 @@ select option{background:#111d11;}
     <button class="modal-close" onclick="closeDetail()">✕</button>
   </div>
   <div id="dp-body" style="padding:14px 18px;display:flex;flex-direction:column;gap:10px;flex:1;overflow-y:auto;"></div>
-  <div style="padding:12px 18px;padding-bottom:calc(12px + var(--sab));border-top:1px solid var(--border);display:flex;gap:8px;flex-shrink:0;">
+  <div id="dp-footer" style="padding:12px 18px;padding-bottom:calc(12px + var(--sab));border-top:1px solid var(--border);display:flex;gap:8px;flex-shrink:0;">
     <button class="btn btn-primary" style="flex:1;" onclick="openAddEventForSelected()">🌿 Подія</button>
     <button class="btn btn-ghost" onclick="openEditPlant()">🪶</button>
     <button class="btn btn-danger" onclick="deleteSelectedPlant()">🪓</button>
@@ -3202,6 +3202,8 @@ function openDetail(id){
   if(!plant) return;
   const meta=PLANT_META[plant.type]||PLANT_META.other;
   const dp=document.getElementById('detailPanel');
+  const dpFooter=document.getElementById('dp-footer');
+  if(dpFooter) dpFooter.style.display='flex';
   document.getElementById('dp-title').textContent=meta.emoji+' '+plant.name+(plant.sort?' · '+plant.sort:'');
 
   const body=document.getElementById('dp-body');
@@ -3697,9 +3699,6 @@ function renderHistoryTab(){
         ${item.comment?`<div class="hist-comment">${item.comment}</div>`:''}
         <div class="hist-plant">${targetLabel}</div>
         ${item.photo?`<img src="${item.photo}" class="hist-img" alt="фото" onclick="viewPhoto('${item.photo}')" style="cursor:zoom-in;">`:''}
-        <div style="display:flex;gap:4px;margin-top:5px;">
-          <button class="plan-btn" style="font-size:.6rem;padding:2px 8px;" onclick="openEditEventModal(${item.id});">🪶 Редагувати</button>
-        </div>
       `;
     }
     // Підсвічуємо нові події (додані після останнього перегляду)
@@ -4142,6 +4141,18 @@ function saveUnifiedEvent(){
 
   if(!plantId){ toast('⚠️ Оберіть рослину або садочок'); return; }
 
+  // Режим редагування виконаної події
+  if(window._editingEventId){
+    const id = window._editingEventId;
+    window._editingEventId = null;
+    const idx = state.history.findIndex(e=>e.id===id);
+    if(idx>=0) state.history[idx] = {...state.history[idx], plantId, date, comment, ownerNote, type};
+    closeModal('eventModal');
+    saveData(); renderSidebar(); renderMap();
+    toast('✅ Подію оновлено');
+    return;
+  }
+
   if(evMode === 'planned' || date > today){
     const repeat = document.getElementById('ev-repeat').value;
     if(editingPlanId){
@@ -4187,10 +4198,12 @@ function saveUnifiedEvent(){
 
 function deleteEvent(id, e){
   e && e.stopPropagation();
+  e && e.preventDefault();
   if(!confirm('Видалити цей запис?')) return;
   state.history = state.history.filter(h=>h.id!==id);
-  autoSave(); renderSidebar(); renderMap();
+  saveData(); renderSidebar(); renderMap();
   if(selectedId) openDetail(selectedId);
+  toast('🗑️ Видалено');
 }
 
 // ── Plan-specific actions (complete / delete / edit) ──
@@ -4227,9 +4240,11 @@ function calcNextDate(dateStr, repeat){
 
 function deletePlan(id, e){
   e && e.stopPropagation();
+  e && e.preventDefault();
   if(!confirm('Видалити цей план?')) return;
   state.plans = state.plans.filter(p=>p.id!==id);
-  autoSave(); renderPlansTab(); renderPlantsTab(); renderDashboard();
+  saveData(); renderSidebar(); renderDashboard();
+  toast('🗑️ Видалено');
 }
 
 function editPlan(id){
@@ -4886,7 +4901,10 @@ function removePhotoFromPlant(plantId, idx){
 }
 
 function openModal(id){document.getElementById(id).classList.add('open');}
-function closeModal(id){document.getElementById(id).classList.remove('open');}
+function closeModal(id){
+  document.getElementById(id).classList.remove('open');
+  if(id==='eventModal') window._editingEventId = null;
+}
 
 // moveEnabled is persistent — can be on while also in view mode
 let moveEnabled = false;
@@ -5433,9 +5451,14 @@ function clearAllEvents(){
 function openEditEventModal(id){
   const ev = state.history.find(e=>e.id===id);
   if(!ev) return;
-  // Відкриваємо eventModal в режимі редагування події
+
+  // Встановлюємо режим редагування
+  window._editingEventId = id;
+
+  // Відкриваємо модалку
   openAddEvent(ev.plantId);
-  // Заповнюємо поля
+
+  // Чекаємо поки модалка відкриється і заповнюємо
   setTimeout(()=>{
     setEvMode('past');
     selectEventType(ev.type);
@@ -5443,20 +5466,12 @@ function openEditEventModal(id){
     if(dateEl) dateEl.value = ev.date;
     const commentEl = document.getElementById('ev-comment');
     if(commentEl) commentEl.value = ev.comment||'';
-    // Зберігаємо id для оновлення
-    window._editingEventId = id;
-    document.getElementById('ev-save-btn').onclick = ()=>{
-      const date = document.getElementById('ev-date').value;
-      const comment = document.getElementById('ev-comment').value.trim();
-      const type = selectedEventType;
-      const idx = state.history.findIndex(e=>e.id===id);
-      if(idx>=0) state.history[idx] = {...state.history[idx], date, comment, type};
-      closeModal('eventModal');
-      saveData(); renderSidebar(); renderMap();
-      toast('✅ Подію оновлено');
-      window._editingEventId = null;
-    };
-  }, 100);
+    const ownerEl = document.getElementById('ev-owner-note');
+    if(ownerEl) ownerEl.value = ev.ownerNote||'';
+    // Міняємо заголовок
+    const title = document.getElementById('eventModalTitle');
+    if(title) title.textContent = 'Редагувати подію';
+  }, 150);
 }
 
 function openAddEventFromJournal(){
@@ -5478,6 +5493,8 @@ function openHistItem(item){
   const dp = document.getElementById('detailPanel');
   const dpTitle = document.getElementById('dp-title');
   const dpBody = document.getElementById('dp-body');
+  const dpFooter = document.getElementById('dp-footer');
+  if(dpFooter) dpFooter.style.display='none';
   dpTitle.innerHTML = `${em.icon} ${em.label}`;
   dpBody.innerHTML = `
     <div style="display:flex;flex-direction:column;gap:10px;">
@@ -5495,8 +5512,12 @@ function openHistItem(item){
       ${item.photo?`<img src="${item.photo}" style="width:100%;border-radius:10px;object-fit:cover;max-height:200px;cursor:zoom-in;" onclick="viewPhoto('${item.photo}')">`:''}
       ${item._kind==='plan'?`<div style="display:flex;gap:8px;margin-top:4px;">
         <button class="btn btn-primary" style="flex:1;" onclick="completePlan(${item.id},event);document.getElementById('detailPanel').style.right='-100vw';renderHistoryTab();">✓ Виконати</button>
-        <button class="btn btn-ghost" onclick="document.getElementById('detailPanel').style.right='-100vw';editPlan(${item.id});">🪶 Редагувати</button>
-      </div>`:''}
+        <button class="btn btn-ghost" onclick="document.getElementById('detailPanel').style.right='-100vw';editPlan(${item.id});">🪶</button>
+        <button class="btn btn-danger" onclick="deletePlan(${item.id},event);document.getElementById('detailPanel').style.right='-100vw';">🗑️</button>
+      </div>`:`<div style="display:flex;gap:8px;margin-top:4px;">
+        <button class="btn btn-ghost" style="flex:1;" onclick="document.getElementById('detailPanel').style.right='-100vw';openEditEventModal(${item.id});">🪶 Редагувати</button>
+        <button class="btn btn-danger" onclick="deleteEvent(${item.id},event);document.getElementById('detailPanel').style.right='-100vw';">🗑️</button>
+      </div>`}
     </div>
   `;
   dp.style.right='0';
