@@ -645,7 +645,7 @@ html,body{height:100%;font-family:'DM Sans',sans-serif;background:var(--bg);colo
 
 /* ─── MODAL ─── */
 .modal-overlay{
-  position:fixed;inset:0;z-index:100;
+  position:fixed;inset:0;z-index:400;
   background:rgba(0,0,0,.75);
   display:flex;align-items:center;justify-content:center;
   padding:16px;
@@ -810,6 +810,7 @@ select option{background:#111d11;}
   animation:pulse 2s infinite;
 }
 @keyframes pulse{0%,100%{opacity:0;transform:scale(1);}50%{opacity:.4;transform:scale(1.1);}}
+@keyframes highlightNew{0%{background:rgba(201,168,76,.25);}100%{background:transparent;}}
 
 /* ─── GRID CONTROL BUTTONS ─── */
 .gc-btn{
@@ -3591,10 +3592,10 @@ function renderHistoryTab(){
 
   const today = new Date().toISOString().slice(0,10);
 
-  let pastEvts = state.history.map(e=>({...e, _kind:'done', _date:e.date}));
+  let pastEvts = state.history.map((e,i)=>({...e, _kind:'done', _date:e.date, _isNew: i >= _lastSeenHistCount}));
   let plannedEvts = (state.plans||[])
     .filter(p=>!p.done)
-    .map(p=>({...p, _kind:'plan', _date: calcNextOccurrence(p)}));
+    .map((p,i)=>({...p, _kind:'plan', _date: calcNextOccurrence(p), _isNew: i >= _lastSeenPlanCount}));
 
   // Status filter
   let all;
@@ -3602,8 +3603,6 @@ function renderHistoryTab(){
     all = plannedEvts;
   } else if(histStatusFilter === 'done'){
     all = pastEvts;
-  } else if(histStatusFilter === 'unread'){
-    all = plannedEvts.filter(p => calcNextOccurrence(p) <= today && !_readIds.has('p'+p.id));
   } else {
     all = [...pastEvts, ...plannedEvts];
   }
@@ -3698,7 +3697,14 @@ function renderHistoryTab(){
         ${item.comment?`<div class="hist-comment">${item.comment}</div>`:''}
         <div class="hist-plant">${targetLabel}</div>
         ${item.photo?`<img src="${item.photo}" class="hist-img" alt="фото" onclick="viewPhoto('${item.photo}')" style="cursor:zoom-in;">`:''}
+        <div style="display:flex;gap:4px;margin-top:5px;">
+          <button class="plan-btn" style="font-size:.6rem;padding:2px 8px;" onclick="openEditEventModal(${item.id});">🪶 Редагувати</button>
+        </div>
       `;
+    }
+    // Підсвічуємо нові події (додані після останнього перегляду)
+    if(item._isNew){
+      d.style.animation='highlightNew 2s ease forwards';
     }
     el.appendChild(d);
   });
@@ -3822,7 +3828,6 @@ function openDrawer(mode, filter){
       <button class="filter-chip active" id="hst-all" onclick="setHistStatusFilter('all',this)">📋 Всі</button>
       <button class="filter-chip" id="hst-planned" onclick="setHistStatusFilter('planned',this)">📅 Заплановані</button>
       <button class="filter-chip" id="hst-done" onclick="setHistStatusFilter('done',this)">✅ Виконані</button>
-      <button class="filter-chip" id="hst-unread" onclick="setHistStatusFilter('unread',this)">🔴 Непрочитані</button>
     `;
     body.appendChild(statusRow);
 
@@ -3894,7 +3899,6 @@ function renderSortsModal(){
     head.style.cssText='display:flex;align-items:center;justify-content:space-between;padding:4px 0 6px;';
     head.innerHTML=`
       <span style="font-size:.62rem;font-weight:700;letter-spacing:.8px;text-transform:uppercase;color:var(--muted);">${meta.emoji} ${meta.label} <span style="color:#3a5a3a;font-weight:400;">(${sorts.length})</span></span>
-      <button onclick="openAddSortForType('${type}')" style="font-size:.6rem;padding:2px 8px;border-radius:10px;background:rgba(201,168,76,.1);border:1px solid rgba(201,168,76,.25);color:var(--gold);cursor:pointer;font-family:'DM Sans',sans-serif;">＋ сорт</button>
     `;
     sec.appendChild(head);
 
@@ -5424,6 +5428,35 @@ function clearAllEvents(){
   renderMap();
   closeGardenMenu();
   toast('🗑️ Всі події видалено');
+}
+
+function openEditEventModal(id){
+  const ev = state.history.find(e=>e.id===id);
+  if(!ev) return;
+  // Відкриваємо eventModal в режимі редагування події
+  openAddEvent(ev.plantId);
+  // Заповнюємо поля
+  setTimeout(()=>{
+    setEvMode('past');
+    selectEventType(ev.type);
+    const dateEl = document.getElementById('ev-date');
+    if(dateEl) dateEl.value = ev.date;
+    const commentEl = document.getElementById('ev-comment');
+    if(commentEl) commentEl.value = ev.comment||'';
+    // Зберігаємо id для оновлення
+    window._editingEventId = id;
+    document.getElementById('ev-save-btn').onclick = ()=>{
+      const date = document.getElementById('ev-date').value;
+      const comment = document.getElementById('ev-comment').value.trim();
+      const type = selectedEventType;
+      const idx = state.history.findIndex(e=>e.id===id);
+      if(idx>=0) state.history[idx] = {...state.history[idx], date, comment, type};
+      closeModal('eventModal');
+      saveData(); renderSidebar(); renderMap();
+      toast('✅ Подію оновлено');
+      window._editingEventId = null;
+    };
+  }, 100);
 }
 
 function openAddEventFromJournal(){
