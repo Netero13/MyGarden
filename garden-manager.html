@@ -1861,7 +1861,7 @@ function userStorageKey(uid){ return 'gardenState_'+uid; }
 function loadData(){
   if(!activeUserId) return;
   const gid = activeGardenId || 'g_default';
-  // Try new key first, fall back to legacy
+  // Try localStorage first
   let raw = localStorage.getItem(gardenStorageKey(activeUserId, gid));
   if(!raw && gid==='g_default') raw = localStorage.getItem(userStorageKey(activeUserId));
   if(raw){
@@ -1876,25 +1876,38 @@ function loadData(){
       if(saved.gridRows) gridRows=saved.gridRows;
       if(saved.gateCol!=null) gateCol=saved.gateCol;
       if(saved.gateSize!=null) gateSize=saved.gateSize;
-    }catch(e){initDefault();}
-  } else {
-    initDefault();
+    }catch(e){ state.plants=[]; state.history=[]; state.plans=[]; }
   }
-  // Підтягуємо свіжі дані з Firebase у фоні
+  // Завжди підтягуємо з Firebase — це єдине джерело правди
+  const fbKey = `shared_${gid}`;
+  const applyFirebase = (remoteState) => {
+    if(!remoteState) {
+      // Firebase порожній — ініціалізуємо дефолт тільки якщо і localStorage порожній
+      if(!raw) initDefault();
+      return;
+    }
+    state.plants = remoteState.plants || [];
+    state.history = remoteState.history || [];
+    state.plans = remoteState.plans || [];
+    state.nextId = remoteState.nextId || 200;
+    state.sortsDb = remoteState.sortsDb || {};
+    if(remoteState.gridCols) gridCols = remoteState.gridCols;
+    if(remoteState.gridRows) gridRows = remoteState.gridRows;
+    if(remoteState.gateCol!=null) gateCol = remoteState.gateCol;
+    if(remoteState.gateSize!=null) gateSize = remoteState.gateSize;
+    localStorage.setItem(gardenStorageKey(activeUserId, gid), JSON.stringify(state));
+    renderMap(); renderDashboard(); updateGridUI(); updateJournalBadge();
+  };
   if(window.firebaseReady && window.firebaseLoad){
-    const fbKey = `shared_${gid}`;
-    window.firebaseLoad(fbKey).then(remoteState => {
-      if(!remoteState) return;
-      state.plants = remoteState.plants || state.plants;
-      state.history = remoteState.history || state.history;
-      state.plans = remoteState.plans || state.plans;
-      state.nextId = remoteState.nextId || state.nextId;
-      state.sortsDb = remoteState.sortsDb || state.sortsDb;
-      if(remoteState.gridCols) gridCols = remoteState.gridCols;
-      if(remoteState.gridRows) gridRows = remoteState.gridRows;
-      localStorage.setItem(gardenStorageKey(activeUserId, gid), JSON.stringify(state));
-      renderMap(); renderDashboard(); updateGridUI();
-    }).catch(()=>{});
+    window.firebaseLoad(fbKey).then(applyFirebase).catch(()=>{ if(!raw) initDefault(); });
+  } else {
+    // Firebase ще не готовий — чекаємо
+    if(!raw) initDefault();
+    window.addEventListener('firebase-ready', ()=>{
+      if(window.firebaseLoad){
+        window.firebaseLoad(fbKey).then(applyFirebase).catch(()=>{});
+      }
+    }, { once: true });
   }
 }
 
@@ -5423,10 +5436,15 @@ document.querySelectorAll('.modal-overlay').forEach(ov=>{
     if(window.firebaseReady) startFirebaseSync();
     // else — firebase-ready listener запустить його
   } else if(users.length===0){
-    // First launch — show profile creation
+    // First launch — створюємо два дефолтних профілі
+    const now = Date.now();
+    const defaultUsers = [
+      { id:'u_dad_'+now, name:'Іван', role:'dad', avatar:'👨', gardens:[{id:'g_default',name:'Мій садочок',emoji:'🌻'}] },
+      { id:'u_mom_'+(now+1), name:'Марина', role:'mom', avatar:'👩', gardens:[{id:'g_default',name:'Мій садочок',emoji:'🌻'}] },
+    ];
+    saveUsers(defaultUsers);
     resizeCanvas();
     showProfileScreen();
-    showAddProfileForm();
   } else {
     // Has users but none active — show selector
     resizeCanvas();
