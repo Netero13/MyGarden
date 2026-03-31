@@ -105,7 +105,7 @@
     _lastPushTime = now;
     _lastPushKey = key;
     try {
-      await setDoc(doc(db, 'notifications', 'latest'), {
+      await setDoc(doc(db, 'notifications', 'push_' + now), {
         title, body, authorName,
         sentAt: now,
         pushId: activeUserId + '_' + now, // унікальний id для дедуплікації
