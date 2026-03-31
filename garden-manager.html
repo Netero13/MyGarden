@@ -2440,15 +2440,19 @@ function autoSave(){
 
 // ── Підключаємо Firebase слухач після завантаження ──
 function startFirebaseSync(){
-  if(!window.firebaseReady || !activeUserId) return;
+  if(!window.firebaseReady || !activeUserId) {
+    console.log('[Firebase] Sync skipped — ready:', window.firebaseReady, 'userId:', activeUserId);
+    return;
+  }
   _fbSyncEnabled = true;
 
   if(_fbUnsubscribe) _fbUnsubscribe();
   const gid = activeGardenId || 'g_default';
-  // Спільний ключ для всієї родини — не прив'язаний до юзера
   const fbKey = `shared_${gid}`;
+  console.log('[Firebase] Subscribing to:', fbKey);
 
   _fbUnsubscribe = window.firebaseSubscribe(fbKey, (remoteState) => {
+    console.log('[Firebase] Got update, lastSave:', Date.now() - _fbLastSaveTime, 'ms ago');
     // Ігноруємо якщо щойно самі зберігали (щоб не перезаписати)
     if(Date.now() - _fbLastSaveTime < 3000) return;
 
@@ -5177,6 +5181,7 @@ function toggleFirebaseSync(){
 
 // Автозапуск Firebase коли готовий
 window.addEventListener('firebase-ready', ()=>{
+  console.log('[Firebase] Ready, activeUserId:', activeUserId);
   if(activeUserId) startFirebaseSync();
 });
 
@@ -5212,6 +5217,9 @@ document.querySelectorAll('.modal-overlay').forEach(ov=>{
     renderDashboard();
     updateGridUI();
     updateUserUI();
+    // Запускаємо Firebase якщо вже готовий, або чекаємо
+    if(window.firebaseReady) startFirebaseSync();
+    // else — firebase-ready listener запустить його
   } else if(users.length===0){
     // First launch — show profile creation
     resizeCanvas();
